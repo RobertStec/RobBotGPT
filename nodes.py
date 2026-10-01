@@ -5,6 +5,7 @@ from langchain_core.messages import (
 from state import AgentState
 
 from langchain_core.runnables import RunnableConfig
+from langgraph.types import StreamWriter
 
 from rag import retrieve_from_rag
 
@@ -119,6 +120,7 @@ def get_latest_user_message(state: AgentState) -> str:
 def retrieve_node(
     state: AgentState,
     config: RunnableConfig,
+    writer: StreamWriter,
 ):
     """
     Retrieve relevant document context from ChromaDB.
@@ -136,6 +138,15 @@ def retrieve_node(
         raise ValueError(
             "thread_id is missing from LangGraph config."
         )
+
+    # -----------------------------------------
+    # Custom streaming event: RAG started
+    # -----------------------------------------
+
+    writer({
+        "type": "rag_search_start",
+        "message": "Searching documents..."
+    })
 
     print(
         f"[RAG] Retrieving documents for thread: "
@@ -157,6 +168,15 @@ def retrieve_node(
         f"[RAG] Context preview: "
         f"{context[:300]}"
     )
+
+    # -----------------------------------------
+    # Custom streaming event: RAG completed
+    # -----------------------------------------
+
+    writer({
+            "type": "rag_search_end",
+            "message": "Document Search completed"
+        })
 
     return {
         "rag_context": context

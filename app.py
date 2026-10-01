@@ -360,7 +360,8 @@ async def chat_stream(request: Request):
                 stream_mode=[
                     "messages",
                     "updates",
-                    "values"
+                    "values",
+                    "custom"
                 ],
                 version="v2"
             ):
@@ -396,6 +397,27 @@ async def chat_stream(request: Request):
                 
                 part_type = part.get("type")
                 part_data = part.get("data")
+
+
+                # =====================================================
+                # CUSTOM - własne zdarzenia workflow
+                # =====================================================
+
+                if part_type == "custom":
+
+                    if not isinstance(part_data, dict):
+                        continue
+
+                    custom_type = part_data.get("type")
+
+                    if custom_type in {
+                        "rag_search_start",
+                        "rag_search_end",
+                    }:
+                        yield sse_data(part_data)
+
+                    continue
+
 
                 # =====================================================
                 # UPDATES - wykrywanie rzeczywistych wywołań narzędzi

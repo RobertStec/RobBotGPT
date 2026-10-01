@@ -697,6 +697,7 @@
     const micBtn = document.getElementById("micBtn");
     const toolProgressMap = new Map();
 
+    let ragProgress = null;
     let waitingForApproval = false;
     let threadId = localStorage.getItem("thread_id");
 
@@ -1385,6 +1386,43 @@
             selectedModel
         ) {
             if (!data) return;
+
+            // -----------------------------------------
+            // RAG SEARCH START
+            // -----------------------------------------
+
+            if (data.type === "rag_search_start") {
+
+                ragProgress =
+                    addToolProgress("Document Search");
+
+                statusText.textContent =
+                    "Searching documents...";
+
+                return;
+            }
+
+            // -----------------------------------------
+            // RAG SEARCH END
+            // -----------------------------------------
+
+            if (data.type === "rag_search_end") {
+
+                if (ragProgress) {
+
+                    completeToolProgress(
+                        ragProgress,
+                        "Document Search"
+                    );
+
+                    ragProgress = null;
+                }
+
+                statusText.textContent =
+                    "Document Search completed";
+
+                return;
+            }
 
             // -----------------------------------------
             // TOOL START
