@@ -4,7 +4,6 @@ from langchain_core.tools import tool
 from langchain_tavily import TavilySearch
 
 from database import save_memory, search_memory
-from rag import retrieve_from_rag
 
 from typing import Any
 import requests
@@ -13,11 +12,7 @@ from langgraph.types import interrupt
 from langgraph.prebuilt import ToolRuntime
 
 
-
 load_dotenv()
-
-
-CURRENT_THREAD_ID = "default"
 
 
 def get_thread_id(runtime: ToolRuntime) -> str:
@@ -372,25 +367,6 @@ def get_current_weather(location: str) -> str:
 
 
 
-@tool
-def search_uploaded_documents(
-    query: str,
-    runtime: ToolRuntime) -> str:
-    """
-    Search uploaded documents for relevant information.
-    Use this when the user asks about uploaded PDFs,
-    DOCX, TXT, notes, files, or documents.
-    """
-
-    thread_id = get_thread_id(runtime)
-
-    return retrieve_from_rag(
-        query=query,
-        thread_id=thread_id
-    )
-
-
-
 
 @tool
 def remember_this(
@@ -434,7 +410,6 @@ tools = [
     get_stock_price,
     purchase_stock,
     get_current_weather,
-    search_uploaded_documents,
     remember_this,
     recall_memory,
     web_search

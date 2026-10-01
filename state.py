@@ -30,3 +30,6 @@ class AgentState(TypedDict):
     route: NotRequired[
         Literal["chatbot", "document"]
     ]
+
+    # Context retrieved from the vector database.
+    rag_context: NotRequired[str]

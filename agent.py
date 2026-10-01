@@ -8,7 +8,7 @@ import certifi
 
 from langchain_openai import ChatOpenAI
 
-from langgraph.graph import StateGraph, START
+from langgraph.graph import StateGraph, START, END
 from state import AgentState
 
 from langgraph.prebuilt import ToolNode, tools_condition
@@ -19,7 +19,8 @@ from nodes import (
     chatbot_node,
     router_node,
     route_after_router,
-    document_request_node,
+    retrieve_node,
+    generate_rag_node,
 )
 
 load_dotenv()
@@ -49,7 +50,7 @@ You are a helpful Agentic AI assistant named RobBotGPT similar to ChatGPT.
 You can:
 1. Answer normal questions.
 2. Use tools when needed.
-3. Search uploaded documents using the RAG tool.
+3. Answer questions about uploaded documents through the RAG workflow.
 4. Search the web for latest/current information using Tavily Search.
 5. Remember important user information using the memory tool.
 6. Recall memory when useful.
@@ -62,7 +63,6 @@ Rules:
 - If the user asks about latest news, current events, recent updates,
   current people, current versions, new releases, or other time-sensitive
   information not handled by a dedicated tool, use Tavily Search.
-- If the user asks about an uploaded document, use search_uploaded_documents.
 - If the user asks you to remember something, use remember_this.
 - If the user asks about previous preferences or saved facts, use recall_memory.
 - Use calculator for math questions.
@@ -106,45 +106,61 @@ def build_agent(model_name: str):
 
     llm_with_tools = llm.bind_tools(tools)
 
-    document_llm = llm.bind_tools(
-        tools,
-        tool_choice="search_uploaded_documents"
-    )
-
     chatbot = partial(
         chatbot_node,
-        llm=llm,
         llm_with_tools=llm_with_tools,
         system_prompt=SYSTEM_PROMPT
     )
 
-    document_request = partial(
-        document_request_node,
-        llm=document_llm,
-        system_prompt=SYSTEM_PROMPT
+    generate_rag = partial(
+        generate_rag_node,
+        llm=llm
     )
+
 
     tool_node = ToolNode(tools)
 
     workflow = StateGraph(AgentState)
 
+    # =========================
+    # Nodes
+    # =========================
+
     workflow.add_node("router", router_node)
     workflow.add_node("chatbot", chatbot)
-    workflow.add_node("document_request", document_request)
+    workflow.add_node("retrieve", retrieve_node)
+    workflow.add_node("generate", generate_rag)
     workflow.add_node("tools", tool_node)
 
+    # =========================
+    # Entry point
+    # =========================
+
     workflow.add_edge(START, "router")
+
+    # =========================
+    # Router
+    # =========================
 
     workflow.add_conditional_edges(
         "router",
         route_after_router,
         {
             "chatbot": "chatbot",
-            "document": "document_request",
+            "document": "retrieve",
         }
     )
 
-    workflow.add_edge("document_request", "tools")
+    # =========================
+    # RAG workflow
+    # =========================
+
+    workflow.add_edge("retrieve", "generate")
+    workflow.add_edge("generate", END)
+
+    # =========================
+    # Normal agent workflow
+    # =========================
 
     workflow.add_conditional_edges("chatbot", tools_condition)
 

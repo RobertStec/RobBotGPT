@@ -1,11 +1,12 @@
 from langchain_core.messages import (
     SystemMessage,
-    HumanMessage,
-    ToolMessage,
+    HumanMessage
 )
 from state import AgentState
 
-from tools import tools
+from langchain_core.runnables import RunnableConfig
+
+from rag import retrieve_from_rag
 
 
 
@@ -64,6 +65,7 @@ def is_document_question(state: AgentState) -> bool:
 
 
 
+
 def router_node(state: AgentState) -> dict:
     """
     Decide which branch of the graph should handle
@@ -83,6 +85,7 @@ def router_node(state: AgentState) -> dict:
 
 
 
+
 def route_after_router(state: AgentState) -> str:
     """
     Return the route selected by router_node.
@@ -95,21 +98,116 @@ def route_after_router(state: AgentState) -> str:
 
 
 
-def document_request_node(
+
+def get_latest_user_message(state: AgentState) -> str:
+    """
+    Return the latest HumanMessage content.
+    """
+
+    for message in reversed(state["messages"]):
+
+        if isinstance(message, HumanMessage):
+
+            if isinstance(message.content, str):
+                return message.content
+
+    return ""
+
+
+
+
+def retrieve_node(
     state: AgentState,
-    llm,
-    system_prompt: str,
+    config: RunnableConfig,
 ):
     """
-    Force document search for requests routed
-    to the document branch.
+    Retrieve relevant document context from ChromaDB.
     """
 
+    query = get_latest_user_message(state)
+
+    thread_id = (
+        config
+        .get("configurable", {})
+        .get("thread_id")
+    )
+
+    if not thread_id:
+        raise ValueError(
+            "thread_id is missing from LangGraph config."
+        )
+
+    print(
+        f"[RAG] Retrieving documents for thread: "
+        f"{thread_id}"
+    )
+
+    context = retrieve_from_rag(
+        query=query,
+        thread_id=thread_id,
+        k=4
+    )
+
+    print(
+        f"[RAG] Retrieved context length: "
+        f"{len(context)} characters"
+    )
+
+    print(
+        f"[RAG] Context preview: "
+        f"{context[:300]}"
+    )
+
+    return {
+        "rag_context": context
+    }
+
+
+
+
+def generate_rag_node(
+    state: AgentState,
+    llm,
+):
+    """
+    Generate the final answer using
+    the retrieved RAG context.
+    """
+
+    context = state.get(
+        "rag_context",
+        ""
+    )
+
+    rag_system_prompt = f"""
+You are RobBotGPT.
+
+Answer the user's question using the retrieved
+document context below.
+
+Rules:
+- Base the answer on the retrieved context.
+- Do not invent information that is not supported
+  by the document context.
+- If the context does not contain enough information,
+  say so clearly.
+- Answer in the same language as the user's question.
+- Be clear and concise.
+
+Retrieved document context:
+
+{context}
+"""
+
     messages = [
-        SystemMessage(content=system_prompt)
+        SystemMessage(
+            content=rag_system_prompt
+        )
     ] + state["messages"]
 
-    response = llm.invoke(messages)
+    response = llm.invoke(
+        messages
+    )
 
     return {
         "messages": [response]
@@ -120,46 +218,20 @@ def document_request_node(
 
 def chatbot_node(
     state: AgentState,
-    llm,
     llm_with_tools,
     system_prompt: str,
 ):
     """
-    Main chatbot node.
-
-    Handles:
-    - normal conversation,
-    - tool usage,
-    - final answer after document search
+    Handle normal conversation
+    and normal tool usage.
     """
 
     messages = [
         SystemMessage(content=system_prompt)
     ] + state["messages"]
 
-    last_message = (
-        state["messages"][-1]
-        if state["messages"]
-        else None
-    )
-
-    # -------------------------------------------------
-    # Document search already returned its result.
-    # Generate the final answer WITHOUT tools.
-    # -------------------------------------------------
-
-    if (
-        isinstance(last_message, ToolMessage)
-        and last_message.name == "search_uploaded_documents"
-    ):
-        response = llm.invoke(messages)
-
-    # -------------------------------------------------
-    # Normal chatbot / tool behavior.
-    # -------------------------------------------------
-
-    else:
-        response = llm_with_tools.invoke(messages)
+    
+    response = llm_with_tools.invoke(messages)
 
     return {
         "messages": [response]
