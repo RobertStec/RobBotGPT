@@ -331,6 +331,19 @@ async def chat_stream(request: Request):
     config = {
         "configurable": {
             "thread_id": thread_id
+        },
+
+        "run_name": "RobBotGPT",
+
+        "tags": [
+            "robbotgpt",
+            "langgraph"
+        ],
+
+        "metadata": {
+            "thread_id": thread_id,
+            "model": selected_model,
+            "speech_language": speech_language
         }
     }
 
