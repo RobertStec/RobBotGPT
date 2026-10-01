@@ -3,12 +3,12 @@ from langchain_core.messages import (
     HumanMessage,
     ToolMessage,
 )
-from langgraph.graph import MessagesState
+from state import AgentState
 
 from tools import tools
 
 
-def is_document_question(state: MessagesState) -> bool:
+def is_document_question(state: AgentState) -> bool:
     """
     Check whether the current user message refers
     to an uploaded document or file.
@@ -63,7 +63,7 @@ def is_document_question(state: MessagesState) -> bool:
 
 
 def chatbot_node(
-    state: MessagesState,
+    state: AgentState,
     llm,
     llm_with_tools,
     system_prompt: str,

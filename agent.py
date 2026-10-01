@@ -7,8 +7,10 @@ from dotenv import load_dotenv
 import certifi
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, ToolMessage
-from langgraph.graph import StateGraph, START, MessagesState
+
+from langgraph.graph import StateGraph, START
+from state import AgentState
+
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -108,7 +110,7 @@ def build_agent(model_name: str):
 
     tool_node = ToolNode(tools)
 
-    workflow = StateGraph(MessagesState)
+    workflow = StateGraph(AgentState)
 
     workflow.add_node("chatbot", chatbot)
     workflow.add_node("tools", tool_node)

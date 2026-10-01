@@ -302,6 +302,7 @@ async def chat_stream(request: Request):
     user_message = data.get("message", "")
     thread_id = data.get("thread_id", "default")
     selected_model = data.get("model", "gpt-4o-mini")
+    speech_language = data.get("speech_language", "pl-PL")
 
     is_resume = "resume" in data
     resume_value = data.get("resume")
@@ -348,7 +349,9 @@ async def chat_stream(request: Request):
                 graph_input = {
                     "messages": [
                         HumanMessage(content=user_message)
-                    ]
+                    ],
+                    "selected_model": selected_model,
+                    "speech_language": speech_language,
                 }
 
             for part in agent.stream(

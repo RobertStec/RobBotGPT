@@ -1655,7 +1655,11 @@
                 body: JSON.stringify({
                     message: message,
                     thread_id: threadId,
-                    model: selectedModel
+                    model: selectedModel,
+                    speech_language:
+                        speechLanguageSelect
+                            ? speechLanguageSelect.value
+                            : "pl-PL"
                 })
             });
 
