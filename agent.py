@@ -15,7 +15,12 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.checkpoint.sqlite import SqliteSaver
 
 from tools import tools
-from nodes import chatbot_node
+from nodes import (
+    chatbot_node,
+    router_node,
+    route_after_router,
+    document_request_node,
+)
 
 load_dotenv()
 
@@ -83,7 +88,7 @@ def normalize_model_name(model_name: str | None) -> str:
     return model_name
 
 
-# Funkcja chatbot_node jest zagnieżdona tymczasowo w funkcji build_agent
+
 
 def build_agent(model_name: str):
     """
@@ -101,6 +106,11 @@ def build_agent(model_name: str):
 
     llm_with_tools = llm.bind_tools(tools)
 
+    document_llm = llm.bind_tools(
+        tools,
+        tool_choice="search_uploaded_documents"
+    )
+
     chatbot = partial(
         chatbot_node,
         llm=llm,
@@ -108,15 +118,36 @@ def build_agent(model_name: str):
         system_prompt=SYSTEM_PROMPT
     )
 
+    document_request = partial(
+        document_request_node,
+        llm=document_llm,
+        system_prompt=SYSTEM_PROMPT
+    )
+
     tool_node = ToolNode(tools)
 
     workflow = StateGraph(AgentState)
 
+    workflow.add_node("router", router_node)
     workflow.add_node("chatbot", chatbot)
+    workflow.add_node("document_request", document_request)
     workflow.add_node("tools", tool_node)
 
-    workflow.add_edge(START, "chatbot")
+    workflow.add_edge(START, "router")
+
+    workflow.add_conditional_edges(
+        "router",
+        route_after_router,
+        {
+            "chatbot": "chatbot",
+            "document": "document_request",
+        }
+    )
+
+    workflow.add_edge("document_request", "tools")
+
     workflow.add_conditional_edges("chatbot", tools_condition)
+
     workflow.add_edge("tools", "chatbot")
 
     conn = sqlite3.connect(

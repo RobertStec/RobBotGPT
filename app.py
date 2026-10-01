@@ -418,7 +418,10 @@ async def chat_stream(request: Request):
                         # ---------------------------------------------
                         # CHATBOT wybrał narzędzie
                         # ---------------------------------------------
-                        if node_name == "chatbot":
+                        if node_name in {
+                            "chatbot",
+                            "document_request"
+                        }:
 
                             for message in messages:
 

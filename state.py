@@ -25,3 +25,8 @@ class AgentState(TypedDict):
     speech_language: NotRequired[
         Literal["pl-PL", "en-US"]
     ]
+
+    # Route selected by the router node.
+    route: NotRequired[
+        Literal["chatbot", "document"]
+    ]

@@ -8,6 +8,7 @@ from state import AgentState
 from tools import tools
 
 
+
 def is_document_question(state: AgentState) -> bool:
     """
     Check whether the current user message refers
@@ -62,6 +63,61 @@ def is_document_question(state: AgentState) -> bool:
     )
 
 
+
+def router_node(state: AgentState) -> dict:
+    """
+    Decide which branch of the graph should handle
+    the current user request.
+    """
+
+    if is_document_question(state):
+        route = "document"
+    else:
+        route = "chatbot"
+
+    print(f"[ROUTER] Selected route: {route}")
+
+    return {
+        "route": route
+    }
+
+
+
+def route_after_router(state: AgentState) -> str:
+    """
+    Return the route selected by router_node.
+    """
+
+    return state.get(
+        "route",
+        "chatbot"
+    )
+
+
+
+def document_request_node(
+    state: AgentState,
+    llm,
+    system_prompt: str,
+):
+    """
+    Force document search for requests routed
+    to the document branch.
+    """
+
+    messages = [
+        SystemMessage(content=system_prompt)
+    ] + state["messages"]
+
+    response = llm.invoke(messages)
+
+    return {
+        "messages": [response]
+    }
+
+
+
+
 def chatbot_node(
     state: AgentState,
     llm,
@@ -74,8 +130,7 @@ def chatbot_node(
     Handles:
     - normal conversation,
     - tool usage,
-    - forced document search,
-    - final answer after RAG.
+    - final answer after document search
     """
 
     messages = [
@@ -89,8 +144,8 @@ def chatbot_node(
     )
 
     # -------------------------------------------------
-    # RAG has already returned its result.
-    # Generate final answer WITHOUT calling tools again.
+    # Document search already returned its result.
+    # Generate the final answer WITHOUT tools.
     # -------------------------------------------------
 
     if (
@@ -100,21 +155,7 @@ def chatbot_node(
         response = llm.invoke(messages)
 
     # -------------------------------------------------
-    # New question about uploaded document.
-    # Force document search exactly once.
-    # -------------------------------------------------
-
-    elif is_document_question(state):
-
-        llm_for_request = llm.bind_tools(
-            tools,
-            tool_choice="search_uploaded_documents"
-        )
-
-        response = llm_for_request.invoke(messages)
-
-    # -------------------------------------------------
-    # Normal agent behavior.
+    # Normal chatbot / tool behavior.
     # -------------------------------------------------
 
     else:
