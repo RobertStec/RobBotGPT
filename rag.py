@@ -63,44 +63,96 @@ def add_document_to_rag(
     thread_id: str,
     original_filename: str | None = None,
 ):
-    text = read_file_text(file_path)
+    path = Path(file_path)
 
-    if not text.strip():
-        raise ValueError("No text could be extracted from this file.")
+    source_name = (
+        original_filename
+        or path.name
+    )
+
+    stored_name = path.name
 
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=900,
         chunk_overlap=150
     )
 
-    chunks = splitter.split_text(text)
+    source_documents = []
 
+    # =========================================
+    # PDF - preserve page numbers
+    # =========================================
 
-    source_name = (
-        original_filename
-        or Path(file_path).name
+    if path.suffix.lower() == ".pdf":
+
+        reader = PdfReader(file_path)
+
+        for page_number, page in enumerate(
+            reader.pages,
+            start=1
+        ):
+
+            text = page.extract_text() or ""
+
+            if not text.strip():
+                continue
+
+            source_documents.append(
+                Document(
+                    page_content=text,
+                    metadata={
+                        "thread_id": thread_id,
+                        "source": source_name,
+                        "stored_name": stored_name,
+                        "page": page_number,
+                    }
+                )
+            )
+
+    # =========================================
+    # Other file types
+    # =========================================
+
+    else:
+
+        text = read_file_text(file_path)
+
+        if not text.strip():
+            raise ValueError(
+                "No text could be extracted from this file."
+            )
+
+        source_documents.append(
+            Document(
+                page_content=text,
+                metadata={
+                    "thread_id": thread_id,
+                    "source": source_name,
+                    "stored_name": stored_name,
+                }
+            )
+        )
+
+    if not source_documents:
+        raise ValueError(
+            "No text could be extracted from this file."
+        )
+
+    # split_documents preserves metadata
+    docs = splitter.split_documents(
+        source_documents
     )
 
-    docs: List[Document] = [
-        Document(
-            page_content=chunk,
-            metadata={
-                "thread_id": thread_id,
-                "source": source_name,
-                "stored_name": Path(file_path).name,
-                "chunk_index": index,
-            }
-        )
-        for index, chunk in enumerate(
-            chunks,
-            start=1
-        )
-    ]
+    for index, doc in enumerate(
+        docs,
+        start=1
+    ):
+        doc.metadata["chunk_index"] = index
 
     vectorstore.add_documents(docs)
 
     return {
-        "filename": Path(file_path).name,
+        "filename": source_name,
         "chunks": len(docs)
     }
 
@@ -135,16 +187,26 @@ def retrieve_from_rag(
             "uploaded document"
         )
 
+        page = doc.metadata.get("page")
+
         chunk_index = doc.metadata.get(
             "chunk_index"
         )
 
-        context_parts.append(
-            doc.page_content
-        )
+        if page is not None:
+            context_parts.append(
+                f"[Source: {source}, page: {page}]\n"
+                f"{doc.page_content}"
+            )
+        else:
+            context_parts.append(
+                f"[Source: {source}]\n"
+                f"{doc.page_content}"
+            )
 
         sources.append({
             "source": source,
+            "page": page,
             "chunk_index": chunk_index,
         })
 
@@ -156,17 +218,19 @@ def retrieve_from_rag(
 
         key = (
             source["source"],
-            source["chunk_index"]
+            source["page"]
+                if source["page"] is not None
+                else source["chunk_index"]
         )
 
-        if key not in seen:
-            seen.add(key)
-            unique_sources.append(source)
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique_sources.append(source)
 
     return {
-        "context": "\n\n".join(
-            context_parts
-        ),
+        "context": "\n\n".join(context_parts),
         "sources": unique_sources
     }
 
@@ -186,30 +250,62 @@ def delete_thread_documents(thread_id: str) -> dict:
     ids = result.get("ids", []) or []
     metadatas = result.get("metadatas", []) or []
 
-    # Collect physical uploaded files before deleting Chroma records
-    source_files = set()
+    # -----------------------------------------
+    # Collect physical uploaded file names
+    # -----------------------------------------
+
+    stored_files = set()
 
     for metadata in metadatas:
+
         if not metadata:
             continue
 
-        source = metadata.get("source")
+        # New metadata format
+        stored_name = metadata.get(
+            "stored_name"
+        )
 
-        if source:
-            source_files.add(source)
+        # Backward compatibility with documents
+        # uploaded before stored_name was introduced.
+        if not stored_name:
+            stored_name = metadata.get(
+                "source"
+            )
 
-    # Delete chunks / embeddings from ChromaDB
+        if stored_name:
+            stored_files.add(
+                stored_name
+            )
+
+    # -----------------------------------------
+    # Delete chunks from ChromaDB
+    # -----------------------------------------
+
     if ids:
-        vectorstore.delete(ids=ids)
+        vectorstore.delete(
+            ids=ids
+        )
 
-    # Delete original uploaded files
+    # -----------------------------------------
+    # Delete uploaded physical files
+    # -----------------------------------------
+
     deleted_files = 0
 
-    for source in source_files:
-        file_path = Path("uploads") / source
+    for stored_name in stored_files:
 
-        if file_path.exists() and file_path.is_file():
+        file_path = (
+            Path("uploads")
+            / stored_name
+        )
+
+        if (
+            file_path.exists()
+            and file_path.is_file()
+        ):
             file_path.unlink()
+
             deleted_files += 1
 
     return {

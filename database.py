@@ -1,8 +1,23 @@
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import create_engine, Column, Integer, String, Text, DateTime
+from sqlalchemy import (
+    create_engine,
+    Column,
+    Integer,
+    String,
+    Text,
+    DateTime,
+    inspect,
+    text,
+)
+
 from sqlalchemy.orm import declarative_base, sessionmaker
+
+import json
+
+
+
 
 Path("data").mkdir(exist_ok=True)
 
@@ -34,6 +49,7 @@ class ChatMessage(Base):
     thread_id = Column(String, index=True)
     role = Column(String)
     content = Column(Text)
+    sources = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -46,8 +62,33 @@ class LongTermMemory(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+
+
 def init_db():
-    Base.metadata.create_all(bind=engine)
+    Base.metadata.create_all(
+        bind=engine
+    )
+
+    inspector = inspect(engine)
+
+    columns = {
+        column["name"]
+        for column
+        in inspector.get_columns(
+            "chat_messages"
+        )
+    }
+
+    if "sources" not in columns:
+
+        with engine.begin() as connection:
+
+            connection.execute(
+                text(
+                    "ALTER TABLE chat_messages "
+                    "ADD COLUMN sources TEXT"
+                )
+            )
 
 
 def create_or_update_conversation(thread_id: str, first_message: str | None = None):
@@ -100,14 +141,30 @@ def list_conversations():
         db.close()
 
 
-def save_chat_message(thread_id: str, role: str, content: str):
+def save_chat_message(
+    thread_id: str,
+    role: str,
+    content: str,
+    sources: list | None = None,
+):
     db = SessionLocal()
 
     try:
+
+        sources_json = (
+            json.dumps(
+                sources,
+                ensure_ascii=False
+            )
+            if sources
+            else None
+        )
+
         msg = ChatMessage(
             thread_id=thread_id,
             role=role,
             content=content,
+            sources=sources_json,
             created_at=datetime.utcnow()
         )
 
@@ -115,17 +172,24 @@ def save_chat_message(thread_id: str, role: str, content: str):
 
         conversation = (
             db.query(Conversation)
-            .filter(Conversation.thread_id == thread_id)
+            .filter(
+                Conversation.thread_id
+                == thread_id
+            )
             .first()
         )
 
         if conversation:
-            conversation.updated_at = datetime.utcnow()
+            conversation.updated_at = (
+                datetime.utcnow()
+            )
 
         db.commit()
 
     finally:
         db.close()
+
+        
 
 
 def get_chat_history(thread_id: str):

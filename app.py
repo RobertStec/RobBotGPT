@@ -142,21 +142,46 @@ async def delete_conversation_endpoint(thread_id: str):
         )
 
 
+def parse_message_sources(
+    raw_sources: str | None
+) -> list:
+
+    if not raw_sources:
+        return []
+
+    try:
+        value = json.loads(raw_sources)
+
+        return (
+            value
+            if isinstance(value, list)
+            else []
+        )
+
+    except json.JSONDecodeError:
+        return []
+
 
 @app.get("/history/{thread_id}")
 async def history(thread_id: str):
-    messages = get_chat_history(thread_id)
+
+    messages = get_chat_history(
+        thread_id
+    )
 
     return {
         "messages": [
             {
                 "role": msg.role,
-                "content": msg.content
+                "content": msg.content,
+                "sources":
+                    parse_message_sources(
+                        msg.sources
+                    )
             }
             for msg in messages
         ]
     }
-
 
 
 
@@ -351,6 +376,8 @@ async def chat_stream(request: Request):
     def event_generator():
         final_answer = ""
 
+        rag_sources = []
+
         # Zapamiętujemy nazwę narzędzia dla danego tool_call_id
         tool_names = {}
 
@@ -424,10 +451,24 @@ async def chat_stream(request: Request):
 
                     custom_type = part_data.get("type")
 
+                    if custom_type == "rag_sources":
+
+                        rag_sources = (
+                            part_data.get(
+                                "sources",
+                                []
+                            )
+                            or []
+                        )
+
+                        yield sse_data(part_data)
+
+                        continue
+
+
                     if custom_type in {
                         "rag_search_start",
                         "rag_search_end",
-                        "rag_sources",
                     }:
                         yield sse_data(part_data)
 
@@ -562,7 +603,8 @@ async def chat_stream(request: Request):
                 save_chat_message(
                     thread_id,
                     "assistant",
-                    final_answer
+                    final_answer,
+                    sources=rag_sources
                 )
 
             yield sse_data({

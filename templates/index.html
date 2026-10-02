@@ -1074,13 +1074,21 @@
             item.className =
                 "rag-source-item";
 
-            const chunkText =
-                source.chunk_index
-                    ? ` — fragment ${source.chunk_index}`
-                    : "";
+            let locationText = "";
+
+            if (source.page) {
+
+                locationText =
+                    ` — strona ${source.page}`;
+
+            } else if (source.chunk_index) {
+
+                locationText =
+                    ` — fragment ${source.chunk_index}`;
+            }
 
             item.textContent =
-                `📄 ${source.source}${chunkText}`;
+                `📄 ${source.source}${locationText}`;
 
             wrapper.appendChild(item);
         });
@@ -1396,10 +1404,23 @@
             }
 
             data.messages.forEach(msg => {
+
                 addMessage(
-                    msg.role === "user" ? "user" : "assistant",
+                    msg.role === "user"
+                        ? "user"
+                        : "assistant",
                     msg.content
                 );
+
+                if (
+                    msg.role === "assistant" &&
+                    msg.sources &&
+                    msg.sources.length > 0
+                ) {
+                    addRagSources(
+                        msg.sources
+                    );
+                }
             });
 
             await loadConversations();
