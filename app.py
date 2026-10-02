@@ -191,7 +191,8 @@ async def upload_document(
 
         result = add_document_to_rag(
             file_path=file_path,
-            thread_id=thread_id
+            thread_id=thread_id,
+            original_filename=filename
         )
 
         return JSONResponse({
@@ -426,6 +427,7 @@ async def chat_stream(request: Request):
                     if custom_type in {
                         "rag_search_start",
                         "rag_search_end",
+                        "rag_sources",
                     }:
                         yield sse_data(part_data)
 

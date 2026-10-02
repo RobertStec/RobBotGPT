@@ -1,4 +1,4 @@
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Any
 from typing_extensions import TypedDict, NotRequired
 
 from langchain_core.messages import AnyMessage
@@ -33,3 +33,8 @@ class AgentState(TypedDict):
 
     # Context retrieved from the vector database.
     rag_context: NotRequired[str]
+
+    # Sources used by the RAG workflow.
+    rag_sources: NotRequired[
+        list[dict[str, Any]]
+]

@@ -286,6 +286,33 @@
             text-transform: uppercase;
         }
 
+        .rag-sources {
+            max-width: 820px;
+            margin: -12px auto 28px;
+            padding-left: 46px;
+        }
+
+        .rag-sources-title {
+            color: #aaa;
+            font-size: 12px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+
+        .rag-source-item {
+            display: inline-block;
+
+            background: #2a2a2a;
+            border: 1px solid #3f3f3f;
+            border-radius: 9px;
+
+            padding: 6px 9px;
+            margin: 3px 5px 3px 0;
+
+            color: #ccc;
+            font-size: 12px;
+        }
+
         .avatar {
             width: 34px;
             height: 34px;
@@ -1015,6 +1042,59 @@
     }
 
 
+    function addRagSources(sources) {
+
+        if (!sources || !sources.length) {
+            return;
+        }
+
+        const wrapper =
+            document.createElement("div");
+
+        wrapper.className =
+            "rag-sources";
+
+        const title =
+            document.createElement("div");
+
+        title.className =
+            "rag-sources-title";
+
+        title.textContent =
+            "Sources";
+
+        wrapper.appendChild(title);
+
+
+        sources.forEach(source => {
+
+            const item =
+                document.createElement("div");
+
+            item.className =
+                "rag-source-item";
+
+            const chunkText =
+                source.chunk_index
+                    ? ` — fragment ${source.chunk_index}`
+                    : "";
+
+            item.textContent =
+                `📄 ${source.source}${chunkText}`;
+
+            wrapper.appendChild(item);
+        });
+
+
+        chatContainer.appendChild(
+            wrapper
+        );
+
+        chatContainer.scrollTop =
+            chatContainer.scrollHeight;
+    }
+
+
 
     function addToolProgress(toolName) {
         const wrapper = document.createElement("div");
@@ -1043,6 +1123,7 @@
         };
     }
 
+
     function completeToolProgress(toolProgress, toolName) {
         if (!toolProgress) return;
 
@@ -1051,13 +1132,13 @@
         toolProgress.text.textContent = `${toolName} completed`;
     }
 
+
     function formatToolName(toolName) {
         const names = {
             calculator: "Calculator",
             get_current_weather: "Current Weather",
             get_stock_price: "Stock Price",
             purchase_stock: "Purchase Stock",
-            search_uploaded_documents: "Document Search",
             remember_this: "Memory Save",
             recall_memory: "Memory Recall",
             tavily_search: "Web Search"
@@ -1065,6 +1146,7 @@
 
         return names[toolName] || toolName;
     }
+
 
     function addApprovalPrompt(payload) {
         const wrapper = document.createElement("div");
@@ -1420,6 +1502,15 @@
 
                 statusText.textContent =
                     "Document Search completed";
+
+                return;
+            }
+
+            if (data.type === "rag_sources") {
+
+                addRagSources(
+                    data.sources
+                );
 
                 return;
             }

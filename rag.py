@@ -58,7 +58,11 @@ def read_file_text(file_path: str) -> str:
 
 
 
-def add_document_to_rag(file_path: str, thread_id: str):
+def add_document_to_rag(
+    file_path: str,
+    thread_id: str,
+    original_filename: str | None = None,
+):
     text = read_file_text(file_path)
 
     if not text.strip():
@@ -71,15 +75,26 @@ def add_document_to_rag(file_path: str, thread_id: str):
 
     chunks = splitter.split_text(text)
 
+
+    source_name = (
+        original_filename
+        or Path(file_path).name
+    )
+
     docs: List[Document] = [
         Document(
             page_content=chunk,
             metadata={
                 "thread_id": thread_id,
-                "source": Path(file_path).name
+                "source": source_name,
+                "stored_name": Path(file_path).name,
+                "chunk_index": index,
             }
         )
-        for chunk in chunks
+        for index, chunk in enumerate(
+            chunks,
+            start=1
+        )
     ]
 
     vectorstore.add_documents(docs)
@@ -91,25 +106,69 @@ def add_document_to_rag(file_path: str, thread_id: str):
 
 
 
-def retrieve_from_rag(query: str, thread_id: str, k: int = 4) -> str:
+def retrieve_from_rag(
+    query: str,
+    thread_id: str,
+    k: int = 4) -> dict:
+
     docs = vectorstore.similarity_search(
         query,
         k=k,
-        filter={"thread_id": thread_id}
+        filter={
+            "thread_id": thread_id
+        }
     )
 
     if not docs:
-        return "No relevant uploaded document content found."
+        return {
+            "context": "",
+            "sources": []
+        }
 
-    results = []
+    context_parts = []
+    sources = []
 
-    for i, doc in enumerate(docs, start=1):
-        source = doc.metadata.get("source", "uploaded document")
-        results.append(
-            f"[Source {i}: {source}]\n{doc.page_content}"
+    for doc in docs:
+
+        source = doc.metadata.get(
+            "source",
+            "uploaded document"
         )
 
-    return "\n\n".join(results)
+        chunk_index = doc.metadata.get(
+            "chunk_index"
+        )
+
+        context_parts.append(
+            doc.page_content
+        )
+
+        sources.append({
+            "source": source,
+            "chunk_index": chunk_index,
+        })
+
+    unique_sources = []
+
+    seen = set()
+
+    for source in sources:
+
+        key = (
+            source["source"],
+            source["chunk_index"]
+        )
+
+        if key not in seen:
+            seen.add(key)
+            unique_sources.append(source)
+
+    return {
+        "context": "\n\n".join(
+            context_parts
+        ),
+        "sources": unique_sources
+    }
 
 
 

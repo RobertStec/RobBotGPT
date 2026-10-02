@@ -153,11 +153,14 @@ def retrieve_node(
         f"{thread_id}"
     )
 
-    context = retrieve_from_rag(
+    result = retrieve_from_rag(
         query=query,
         thread_id=thread_id,
         k=4
     )
+
+    context = result["context"]
+    sources = result["sources"]
 
     print(
         f"[RAG] Retrieved context length: "
@@ -179,7 +182,8 @@ def retrieve_node(
         })
 
     return {
-        "rag_context": context
+        "rag_context": context,
+        "rag_sources": sources
     }
 
 
@@ -188,6 +192,7 @@ def retrieve_node(
 def generate_rag_node(
     state: AgentState,
     llm,
+    writer: StreamWriter,
 ):
     """
     Generate the final answer using
@@ -225,9 +230,19 @@ Retrieved document context:
         )
     ] + state["messages"]
 
-    response = llm.invoke(
-        messages
+    response = llm.invoke(messages)
+
+    sources = state.get(
+        "rag_sources",
+        []
     )
+
+    if sources:
+        writer({
+            "type": "rag_sources",
+            "sources": sources
+        })
+
 
     return {
         "messages": [response]
