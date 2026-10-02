@@ -1,3 +1,6 @@
+import ast
+import operator
+import re
 import math
 from dotenv import load_dotenv
 from langchain_core.tools import tool
@@ -42,29 +45,390 @@ web_search = TavilySearch(
 )
 
 
+_BINARY_OPERATORS = {
+    ast.Add: operator.add,
+    ast.Sub: operator.sub,
+    ast.Mult: operator.mul,
+    ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+}
+
+_UNARY_OPERATORS = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+}
+
+_ALLOWED_MATH_FUNCTIONS = {
+    "abs": abs,
+    "round": round,
+    "min": min,
+    "max": max,
+    "sum": sum,
+
+    "sqrt": math.sqrt,
+    "sin": math.sin,
+    "cos": math.cos,
+    "tan": math.tan,
+    "log": math.log,
+    "log10": math.log10,
+    "exp": math.exp,
+    "floor": math.floor,
+    "ceil": math.ceil,
+}
+
+_ALLOWED_MATH_CONSTANTS = {
+    "pi": math.pi,
+    "e": math.e,
+}
+
+def _resolve_math_function(node):
+    """
+    Return an allowed math function.
+    """
+
+    if isinstance(node, ast.Name):
+
+        function = _ALLOWED_MATH_FUNCTIONS.get(
+            node.id
+        )
+
+        if function is None:
+            raise ValueError(
+                f"Function '{node.id}' is not allowed."
+            )
+
+        return function
+
+    if (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "math"
+    ):
+
+        function = _ALLOWED_MATH_FUNCTIONS.get(
+            node.attr
+        )
+
+        if function is None:
+            raise ValueError(
+                f"Function 'math.{node.attr}' is not allowed."
+            )
+
+        return function
+
+    raise ValueError(
+        "Only approved math functions are allowed."
+    )
+
+
+def _safe_eval_node(node):
+
+    if isinstance(node, ast.Expression):
+        return _safe_eval_node(
+            node.body
+        )
+
+    # -----------------------------------------
+    # Numbers
+    # -----------------------------------------
+
+    if isinstance(node, ast.Constant):
+
+        if type(node.value) not in (
+            int,
+            float,
+        ):
+            raise ValueError(
+                "Only numeric constants are allowed."
+            )
+
+        return node.value
+
+    # -----------------------------------------
+    # Binary operations
+    # -----------------------------------------
+
+    if isinstance(node, ast.BinOp):
+
+        operator_type = type(node.op)
+
+        operation = _BINARY_OPERATORS.get(
+            operator_type
+        )
+
+        if operation is None:
+            raise ValueError(
+                "Operator is not allowed."
+            )
+
+        left = _safe_eval_node(
+            node.left
+        )
+
+        right = _safe_eval_node(
+            node.right
+        )
+
+        if (
+            type(left) not in (int, float)
+            or type(right) not in (int, float)
+        ):
+            raise ValueError(
+                "Binary operations are allowed "
+                "only on numbers."
+            )
+
+        # Prevent extremely expensive powers.
+        if (
+            operator_type is ast.Pow
+            and abs(right) > 1000
+        ):
+            raise ValueError(
+                "Exponent is too large."
+            )
+
+        return operation(
+            left,
+            right
+        )
+
+    # -----------------------------------------
+    # Unary operations
+    # -----------------------------------------
+
+    if isinstance(node, ast.UnaryOp):
+
+        operation = _UNARY_OPERATORS.get(
+            type(node.op)
+        )
+
+        if operation is None:
+            raise ValueError(
+                "Unary operator is not allowed."
+            )
+
+        return operation(
+            _safe_eval_node(
+                node.operand
+            )
+        )
+
+    # -----------------------------------------
+    # Constants: pi, e
+    # -----------------------------------------
+
+    if isinstance(node, ast.Name):
+
+        if node.id in _ALLOWED_MATH_CONSTANTS:
+            return _ALLOWED_MATH_CONSTANTS[
+                node.id
+            ]
+
+        raise ValueError(
+            f"Name '{node.id}' is not allowed."
+        )
+
+    # math.pi / math.e
+    if isinstance(node, ast.Attribute):
+
+        if (
+            isinstance(node.value, ast.Name)
+            and node.value.id == "math"
+            and node.attr
+            in _ALLOWED_MATH_CONSTANTS
+        ):
+            return _ALLOWED_MATH_CONSTANTS[
+                node.attr
+            ]
+
+        raise ValueError(
+            "Attribute access is not allowed."
+        )
+
+    # -----------------------------------------
+    # Lists / tuples
+    # Allows: sum([1, 2, 3])
+    # -----------------------------------------
+
+    if isinstance(node, ast.List):
+
+        return [
+            _safe_eval_node(item)
+            for item in node.elts
+        ]
+
+    if isinstance(node, ast.Tuple):
+
+        return tuple(
+            _safe_eval_node(item)
+            for item in node.elts
+        )
+
+    # -----------------------------------------
+    # Function calls
+    # -----------------------------------------
+
+    if isinstance(node, ast.Call):
+
+        if node.keywords:
+            raise ValueError(
+                "Keyword arguments are not allowed."
+            )
+
+        function = _resolve_math_function(
+            node.func
+        )
+
+        arguments = [
+            _safe_eval_node(argument)
+            for argument in node.args
+        ]
+
+        return function(
+            *arguments
+        )
+
+    raise ValueError(
+        f"Unsupported expression: "
+        f"{type(node).__name__}"
+    )
+
+def safe_calculate(
+    expression: str
+):
+    """
+    Parse and calculate a math expression
+    without using eval().
+    """
+
+    expression = expression.strip()
+
+    if not expression:
+        raise ValueError(
+            "Expression is required."
+        )
+
+    # Avoid extremely large input.
+    if len(expression) > 200:
+        raise ValueError(
+            "Expression is too long."
+        )
+
+    tree = ast.parse(
+        expression,
+        mode="eval"
+    )
+
+    # Prevent deliberately huge AST trees.
+    node_count = sum(
+        1
+        for _ in ast.walk(tree)
+    )
+
+    if node_count > 100:
+        raise ValueError(
+            "Expression is too complex."
+        )
+
+    result = _safe_eval_node(
+        tree
+    )
+
+    if (
+        isinstance(result, float)
+        and not math.isfinite(result)
+    ):
+        raise ValueError(
+            "Result is not finite."
+        )
+
+    if (
+        isinstance(result, int)
+        and len(str(abs(result))) > 1000
+    ):
+        raise ValueError(
+            "Result is too large."
+        )
+
+    return result
+
+
 @tool
 def calculator(expression: str) -> str:
     """
-    Useful for simple math calculations.
-    Input should be a valid math expression.
-    Example: 2 + 2, math.sqrt(16), 10 * 5
+    Safely calculate a mathematical expression.
+
+    Examples:
+    - 2 + 2
+    - 125 * 48 / 6
+    - math.sqrt(16)
+    - sqrt(81)
+    - round(math.pi, 3)
+    - sum([1, 2, 3])
     """
 
     try:
-        allowed = {
-            "math": math,
-            "abs": abs,
-            "round": round,
-            "min": min,
-            "max": max,
-            "sum": sum
-        }
 
-        result = eval(expression, {"__builtins__": {}}, allowed)
+        result = safe_calculate(
+            expression
+        )
+
         return str(result)
 
-    except Exception as e:
-        return f"Calculation error: {str(e)}"
+    except SyntaxError:
+        return (
+            "Calculation error: "
+            "invalid mathematical expression."
+        )
+
+    except (
+        ValueError,
+        TypeError,
+        ZeroDivisionError,
+        OverflowError,
+    ) as error:
+
+        return (
+            "Calculation error: "
+            f"{error}"
+        )
+
+    except Exception as error:
+
+        print(
+            f"[TOOL ERROR][calculator] {error}"
+        )
+
+        return (
+            "The calculator could not complete "
+            "the request."
+        )
+
+
+
+
+def normalize_stock_symbol(
+    symbol: str
+) -> str:
+
+    symbol = symbol.strip().upper()
+
+    if not symbol:
+        raise ValueError(
+            "Stock symbol is required."
+        )
+
+    if not re.fullmatch(
+        r"[A-Z0-9.-]{1,15}",
+        symbol
+    ):
+        raise ValueError(
+            "Invalid stock symbol."
+        )
+
+    return symbol
     
 
 @tool
@@ -90,12 +454,15 @@ def get_stock_price(symbol: str) -> dict:
             )
         }
 
-    symbol = symbol.strip().upper()
+    try:
+        symbol = normalize_stock_symbol(
+            symbol
+        )
 
-    if not symbol:
+    except ValueError as error:
         return {
             "status": "error",
-            "message": "Stock symbol is required."
+            "message": str(error)
         }
 
     url = "https://www.alphavantage.co/query"
@@ -170,15 +537,37 @@ def get_stock_price(symbol: str) -> dict:
         }
 
     except requests.RequestException as error:
+
+        print(
+            f"[TOOL ERROR][get_stock_price] {error}"
+        )
+
         return {
             "status": "error",
-            "message": f"Could not connect to Alpha Vantage: {error}"
+            "message": (
+                "Could not connect to "
+                "the stock price service."
+            )
         }
 
     except ValueError:
         return {
             "status": "error",
             "message": "Alpha Vantage returned an invalid JSON response."
+        }
+
+    except Exception as error:
+
+        print(
+            f"[TOOL ERROR][get_stock_price] {error}"
+        )
+
+        return {
+            "status": "error",
+            "message": (
+                "The stock price tool could not "
+                "complete the request."
+            )
         }
 
 
@@ -196,18 +585,29 @@ def purchase_stock(symbol: str, quantity: int) -> dict:
         quantity: Number of shares to purchase.
     """
 
-    symbol = symbol.strip().upper()
+    try:
+        symbol = normalize_stock_symbol(
+            symbol
+        )
 
-    if not symbol:
+    except ValueError as error:
         return {
             "status": "error",
-            "message": "Stock symbol is required."
+            "message": str(error)
         }
 
     if quantity <= 0:
         return {
             "status": "error",
             "message": "Quantity must be greater than 0."
+        }
+
+    if quantity > 100_000:
+        return {
+            "status": "error",
+            "message": (
+                "Quantity is too large."
+            )
         }
 
     approval = interrupt({
@@ -256,6 +656,19 @@ def get_current_weather(location: str) -> str:
     Returns:
         A formatted current weather report.
     """
+
+    location = location.strip()
+
+    if not location:
+        return (
+            "Weather location is required."
+        )
+
+    if len(location) > 120:
+        return (
+            "Weather location is too long."
+        )
+
 
     api_key = os.getenv("OPENWEATHER_API_KEY")
 
@@ -359,11 +772,37 @@ def get_current_weather(location: str) -> str:
         return f"Weather API returned an HTTP error: {status_code}"
 
     except requests.RequestException as error:
-        return f"Could not connect to the weather service: {error}"
+
+        print(
+            f"[TOOL ERROR][get_current_weather] {error}"
+        )
+
+        return (
+            "Could not connect to "
+            "the weather service."
+        )
 
     except (KeyError, TypeError, ValueError) as error:
-        return f"Unexpected weather API response: {error}"
 
+        print(
+            f"[TOOL ERROR][get_current_weather] {error}"
+        )
+
+        return (
+            "The weather service returned "
+            "an unexpected response."
+        )
+
+    except Exception as error:
+
+        print(
+            f"[TOOL ERROR][get_current_weather] {error}"
+        )
+
+        return (
+            "The weather tool could not complete "
+            "the request."
+        )
 
 
 
@@ -371,36 +810,91 @@ def get_current_weather(location: str) -> str:
 @tool
 def remember_this(
     memory: str,
-    runtime: ToolRuntime) -> str:
+    runtime: ToolRuntime
+) -> str:
     """
     Save an important user preference or fact
     into long-term memory.
     """
 
-    thread_id = get_thread_id(runtime)
+    try:
 
-    return save_memory(
-        thread_id=thread_id,
-        memory=memory
-    )
+        thread_id = get_thread_id(
+            runtime
+        )
+
+        memory = memory.strip()
+
+        if not memory:
+            return "Nothing to remember."
+
+        if len(memory) > 2000:
+            return (
+                "Memory is too long. "
+                "Please provide a shorter fact."
+            )
+
+        return save_memory(
+            thread_id=thread_id,
+            memory=memory
+        )
+
+    except Exception as error:
+
+        print(
+            f"[TOOL ERROR][remember_this] {error}"
+        )
+
+        return (
+            "The memory tool could not "
+            "save the information."
+        )
 
 
 
 @tool
 def recall_memory(
     query: str,
-    runtime: ToolRuntime) -> str:
+    runtime: ToolRuntime
+) -> str:
     """
     Recall saved long-term memories
     about this conversation.
     """
 
-    thread_id = get_thread_id(runtime)
+    try:
 
-    return search_memory(
-        thread_id=thread_id,
-        query=query
-    )
+        thread_id = get_thread_id(
+            runtime
+        )
+
+        query = query.strip()
+
+        if not query:
+            return (
+                "Memory query is required."
+            )
+
+        if len(query) > 500:
+            return (
+                "Memory query is too long."
+            )
+
+        return search_memory(
+            thread_id=thread_id,
+            query=query
+        )
+
+    except Exception as error:
+
+        print(
+            f"[TOOL ERROR][recall_memory] {error}"
+        )
+
+        return (
+            "The memory tool could not "
+            "retrieve the information."
+        )
 
 
 
