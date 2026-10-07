@@ -1,19 +1,12 @@
-import os
-import sqlite3
-from pathlib import Path
-from functools import partial
-
-from dotenv import load_dotenv
-import certifi
-
 from langchain_openai import ChatOpenAI
-
 from langgraph.graph import StateGraph, START, END
-from state import AgentState
 
 from langgraph.prebuilt import ToolNode, tools_condition
-from langgraph.checkpoint.sqlite import SqliteSaver
 
+from core.config import (ALLOWED_MODELS, settings,)
+from functools import partial
+
+from state import AgentState
 from tools import tools
 from nodes import (
     chatbot_node,
@@ -23,25 +16,15 @@ from nodes import (
     generate_rag_node,
 )
 
-load_dotenv()
-
-os.environ["SSL_CERT_FILE"] = certifi.where()
-os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
-
-
-Path("data").mkdir(exist_ok=True)
-CHECKPOINT_DB_PATH = "data/langgraph_checkpoints.sqlite"
+from checkpoints import (
+    get_checkpointer,
+    delete_thread_checkpoints,
+)
 
 
-DEFAULT_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 
-ALLOWED_MODELS = {
-    "gpt-4o-mini",
-    "gpt-4.1-mini",
-    "gpt-5.6-luna",
-    "gpt-5.6-terra",
-    "gpt-5.6-sol",
-}
+
+DEFAULT_MODEL = settings.openai_model
 
 
 SYSTEM_PROMPT = """
@@ -101,7 +84,8 @@ def build_agent(model_name: str):
     llm = ChatOpenAI(
         model=selected_model,
         temperature=0.3,
-        streaming=True
+        streaming=True,
+        api_key=settings.openai_api_key,
     )
 
     llm_with_tools = llm.bind_tools(tools)
@@ -166,12 +150,7 @@ def build_agent(model_name: str):
 
     workflow.add_edge("tools", "chatbot")
 
-    conn = sqlite3.connect(
-        CHECKPOINT_DB_PATH,
-        check_same_thread=False
-    )
-
-    checkpointer = SqliteSaver(conn)
+    checkpointer = get_checkpointer()
 
     return workflow.compile(checkpointer=checkpointer)
 
@@ -194,20 +173,11 @@ def get_agent(model_name: str | None = None):
 
 
 
-def delete_thread_checkpoints(thread_id: str) -> None:
+def clear_agent_cache() -> None:
     """
-    Delete all LangGraph checkpoints associated with a thread.
+    Clear cached compiled LangGraph agents.
+
+    Used during application shutdown and tests.
     """
 
-    conn = sqlite3.connect(
-        CHECKPOINT_DB_PATH,
-        check_same_thread=False
-    )
-
-    try:
-        checkpointer = SqliteSaver(conn)
-
-        checkpointer.delete_thread(thread_id)
-
-    finally:
-        conn.close()
+    _AGENT_CACHE.clear()

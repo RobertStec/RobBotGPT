@@ -1,35 +1,79 @@
+from core.config import settings
+
 from pathlib import Path
 from typing import List
-from dotenv import load_dotenv
-import os
-import certifi
 
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
+from functools import lru_cache
+
 from pypdf import PdfReader
 import docx2txt
 
-load_dotenv()
-
-os.environ["SSL_CERT_FILE"] = certifi.where()
-os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
 
 
-Path("uploads").mkdir(exist_ok=True)
-Path("chroma_db").mkdir(exist_ok=True)
 
 
-# Embeddings model
-embeddings = OpenAIEmbeddings(model="text-embedding-3-small")
-
-vectorstore = Chroma(
-    collection_name="agentic_chatbot_docs",
-    embedding_function=embeddings,
-    persist_directory="chroma_db"
+settings.upload_dir.mkdir(
+    exist_ok=True
 )
+
+settings.chroma_dir.mkdir(
+    exist_ok=True
+)
+
+
+@lru_cache(maxsize=1)
+def get_embeddings() -> OpenAIEmbeddings:
+    """
+    Create and cache the embedding model.
+
+    The object is initialized lazily on first use,
+    not during module import.
+    """
+
+    return OpenAIEmbeddings(
+        model=settings.embedding_model,
+        api_key=settings.openai_api_key,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_vectorstore() -> Chroma:
+    """
+    Create and cache the Chroma vector store.
+
+    Initialization happens only when RAG
+    functionality is actually used.
+    """
+
+    settings.chroma_dir.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    return Chroma(
+        collection_name="agentic_chatbot_docs",
+        embedding_function=get_embeddings(),
+        persist_directory=str(
+            settings.chroma_dir
+        ),
+    )
+
+
+def clear_rag_resource_cache() -> None:
+    """
+    Clear cached RAG infrastructure.
+
+    Mainly useful for tests and controlled
+    reinitialization.
+    """
+
+    get_vectorstore.cache_clear()
+    get_embeddings.cache_clear()
 
 
 
@@ -73,8 +117,8 @@ def add_document_to_rag(
     stored_name = path.name
 
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=900,
-        chunk_overlap=150
+        chunk_size=settings.rag_chunk_size,
+        chunk_overlap=settings.rag_chunk_overlap,
     )
 
     source_documents = []
@@ -149,6 +193,8 @@ def add_document_to_rag(
     ):
         doc.metadata["chunk_index"] = index
 
+    vectorstore = get_vectorstore()
+
     vectorstore.add_documents(docs)
 
     return {
@@ -162,6 +208,8 @@ def retrieve_from_rag(
     query: str,
     thread_id: str,
     k: int = 4) -> dict:
+
+    vectorstore = get_vectorstore()
 
     docs = vectorstore.similarity_search(
         query,
@@ -236,11 +284,101 @@ def retrieve_from_rag(
 
 
 
+
+def delete_document_from_rag(
+    thread_id: str,
+    stored_name: str,
+) -> dict:
+    """
+    Delete one uploaded document and its chunks
+    without affecting other documents in the thread.
+    """
+
+    vectorstore = get_vectorstore()
+
+    result = vectorstore.get(
+        where={
+            "thread_id": thread_id
+        },
+        include=[
+            "metadatas"
+        ],
+    )
+
+    ids = (
+        result.get("ids", [])
+        or []
+    )
+
+    metadatas = (
+        result.get("metadatas", [])
+        or []
+    )
+
+    ids_to_delete = []
+
+    for document_id, metadata in zip(
+        ids,
+        metadatas,
+    ):
+        if not metadata:
+            continue
+
+        metadata_stored_name = (
+            metadata.get("stored_name")
+        )
+
+        if not metadata_stored_name:
+            metadata_stored_name = (
+                metadata.get("source")
+            )
+
+        if (
+            metadata_stored_name
+            == stored_name
+        ):
+            ids_to_delete.append(
+                document_id
+            )
+
+    if ids_to_delete:
+        vectorstore.delete(
+            ids=ids_to_delete
+        )
+
+    file_path = (
+        settings.upload_dir
+        / stored_name
+    )
+
+    deleted_files = 0
+
+    if (
+        file_path.exists()
+        and file_path.is_file()
+    ):
+        file_path.unlink()
+
+        deleted_files = 1
+
+    return {
+        "deleted_chunks": len(
+            ids_to_delete
+        ),
+        "deleted_files": deleted_files,
+    }
+
+
+
+
+
 def delete_thread_documents(thread_id: str) -> dict:
     """
     Delete all ChromaDB documents and uploaded files
     associated with a conversation thread.
     """
+
+    vectorstore = get_vectorstore()
 
     result = vectorstore.get(
         where={"thread_id": thread_id},
@@ -278,14 +416,6 @@ def delete_thread_documents(thread_id: str) -> dict:
                 stored_name
             )
 
-    # -----------------------------------------
-    # Delete chunks from ChromaDB
-    # -----------------------------------------
-
-    if ids:
-        vectorstore.delete(
-            ids=ids
-        )
 
     # -----------------------------------------
     # Delete uploaded physical files
@@ -296,7 +426,7 @@ def delete_thread_documents(thread_id: str) -> dict:
     for stored_name in stored_files:
 
         file_path = (
-            Path("uploads")
+            settings.upload_dir
             / stored_name
         )
 
@@ -307,6 +437,17 @@ def delete_thread_documents(thread_id: str) -> dict:
             file_path.unlink()
 
             deleted_files += 1
+
+
+    # -----------------------------------------
+    # Delete chunks from ChromaDB
+    # -----------------------------------------
+
+    if ids:
+        vectorstore.delete(
+            ids=ids
+        )       
+        
 
     return {
         "deleted_chunks": len(ids),

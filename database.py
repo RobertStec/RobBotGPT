@@ -1,5 +1,6 @@
+from core.config import settings
+
 from datetime import datetime
-from pathlib import Path
 
 from sqlalchemy import (
     create_engine,
@@ -12,24 +13,178 @@ from sqlalchemy import (
     text,
 )
 
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy.engine import (
+    Engine,
+    make_url,
+)
+
+from sqlalchemy.orm import (
+    declarative_base,
+    sessionmaker,
+)
+
+from core.config import settings
 
 import json
 
 
 
-
-Path("data").mkdir(exist_ok=True)
-
-DATABASE_URL = "sqlite:///data/chatbot_memory.db"
-
-engine = create_engine(
-    DATABASE_URL,
-    connect_args={"check_same_thread": False}
-)
-
-SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base = declarative_base()
+
+_ENGINE_CACHE: dict[str, Engine] = {}
+_SESSION_FACTORY_CACHE: dict[str, sessionmaker] = {}
+
+
+def _ensure_sqlite_directory(
+    database_url: str,
+) -> None:
+    """
+    Create the parent directory for a file-based
+    SQLite database when necessary.
+    """
+
+    url = make_url(database_url)
+
+    if url.get_backend_name() != "sqlite":
+        return
+
+    database_path = url.database
+
+    if (
+        not database_path
+        or database_path == ":memory:"
+    ):
+        return
+
+    from pathlib import Path
+
+    Path(database_path).parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+
+def create_database_engine(
+    database_url: str,
+) -> Engine:
+    """
+    Create an SQLAlchemy engine appropriate
+    for the selected database backend.
+    """
+
+    _ensure_sqlite_directory(
+        database_url
+    )
+
+    url = make_url(
+        database_url
+    )
+
+    engine_kwargs = {
+        "pool_pre_ping": True,
+    }
+
+    if (
+        url.get_backend_name()
+        == "sqlite"
+    ):
+        engine_kwargs[
+            "connect_args"
+        ] = {
+            "check_same_thread": False
+        }
+
+    return create_engine(
+        database_url,
+        **engine_kwargs,
+    )
+
+
+def get_engine(
+    database_url: str | None = None,
+) -> Engine:
+    """
+    Return a cached SQLAlchemy engine.
+
+    The engine is initialized lazily on first use.
+    """
+
+    resolved_url = (
+        database_url
+        or settings.database_url
+    )
+
+    if (
+        resolved_url
+        not in _ENGINE_CACHE
+    ):
+        _ENGINE_CACHE[
+            resolved_url
+        ] = create_database_engine(
+            resolved_url
+        )
+
+    return _ENGINE_CACHE[
+        resolved_url
+    ]
+
+
+def get_session_factory(
+    database_url: str | None = None,
+):
+    """
+    Return a cached SQLAlchemy session factory.
+    """
+
+    resolved_url = (
+        database_url
+        or settings.database_url
+    )
+
+    if (
+        resolved_url
+        not in _SESSION_FACTORY_CACHE
+    ):
+        _SESSION_FACTORY_CACHE[
+            resolved_url
+        ] = sessionmaker(
+            bind=get_engine(
+                resolved_url
+            ),
+            autoflush=False,
+            autocommit=False,
+        )
+
+    return _SESSION_FACTORY_CACHE[
+        resolved_url
+    ]
+
+
+def create_session():
+    """
+    Create a new database session using
+    the configured session factory.
+    """
+
+    return get_session_factory()()
+
+
+def clear_database_resource_cache() -> None:
+    """
+    Dispose cached database engines and clear
+    session factories.
+
+    Primarily useful in tests and controlled
+    reconfiguration.
+    """
+
+    _SESSION_FACTORY_CACHE.clear()
+
+    for engine in _ENGINE_CACHE.values():
+        engine.dispose()
+
+    _ENGINE_CACHE.clear()
+
 
 
 class Conversation(Base):
@@ -65,11 +220,15 @@ class LongTermMemory(Base):
 
 
 def init_db():
+    engine = get_engine()
+
     Base.metadata.create_all(
         bind=engine
     )
 
-    inspector = inspect(engine)
+    inspector = inspect(
+        engine
+    )
 
     columns = {
         column["name"]
@@ -92,7 +251,7 @@ def init_db():
 
 
 def create_or_update_conversation(thread_id: str, first_message: str | None = None):
-    db = SessionLocal()
+    db = create_session()
 
     try:
         conversation = (
@@ -128,7 +287,7 @@ def create_or_update_conversation(thread_id: str, first_message: str | None = No
 
 
 def list_conversations():
-    db = SessionLocal()
+    db = create_session()
 
     try:
         return (
@@ -147,8 +306,7 @@ def save_chat_message(
     content: str,
     sources: list | None = None,
 ):
-    db = SessionLocal()
-
+    db = create_session()
     try:
 
         sources_json = (
@@ -193,7 +351,7 @@ def save_chat_message(
 
 
 def get_chat_history(thread_id: str):
-    db = SessionLocal()
+    db = create_session()
 
     try:
         return (
@@ -208,7 +366,7 @@ def get_chat_history(thread_id: str):
 
 
 def save_memory(thread_id: str, memory: str):
-    db = SessionLocal()
+    db = create_session()
 
     try:
         item = LongTermMemory(
@@ -227,7 +385,7 @@ def save_memory(thread_id: str, memory: str):
 
 
 def search_memory(thread_id: str, query: str):
-    db = SessionLocal()
+    db = create_session()
 
     try:
         memories = (
@@ -248,8 +406,37 @@ def search_memory(thread_id: str, query: str):
 
 
 
+
+def conversation_exists(
+    thread_id: str,
+) -> bool:
+    """
+    Check whether a conversation exists
+    without modifying any data.
+    """
+
+    db = create_session()
+
+    try:
+        return (
+            db.query(Conversation.id)
+            .filter(
+                Conversation.thread_id
+                == thread_id
+            )
+            .first()
+            is not None
+        )
+
+    finally:
+        db.close()
+
+
+
+
+
 def delete_conversation(thread_id: str) -> bool:
-    db = SessionLocal()
+    db = create_session()
 
     try:
         conversation = (

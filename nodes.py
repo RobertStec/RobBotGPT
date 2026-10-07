@@ -1,3 +1,7 @@
+import logging
+
+from core.config import settings
+
 from langchain_core.messages import (
     SystemMessage,
     HumanMessage
@@ -8,6 +12,11 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.types import StreamWriter
 
 from rag import retrieve_from_rag
+
+
+
+
+logger = logging.getLogger(__name__)
 
 
 
@@ -78,7 +87,10 @@ def router_node(state: AgentState) -> dict:
     else:
         route = "chatbot"
 
-    print(f"[ROUTER] Selected route: {route}")
+    logger.debug(
+        "Router selected route=%s",
+        route,
+    )
 
     return {
         "route": route
@@ -148,28 +160,28 @@ def retrieve_node(
         "message": "Searching documents..."
     })
 
-    print(
-        f"[RAG] Retrieving documents for thread: "
-        f"{thread_id}"
+    logger.info(
+        "RAG retrieval started thread_id=%s",
+        thread_id,
     )
 
     result = retrieve_from_rag(
         query=query,
         thread_id=thread_id,
-        k=4
+        k=settings.rag_top_k,
     )
 
     context = result["context"]
     sources = result["sources"]
 
-    print(
-        f"[RAG] Retrieved context length: "
-        f"{len(context)} characters"
-    )
-
-    print(
-        f"[RAG] Context preview: "
-        f"{context[:300]}"
+    logger.debug(
+        (
+            "RAG retrieval completed "
+            "thread_id=%s context_chars=%d sources=%d"
+        ),
+        thread_id,
+        len(context),
+        len(sources),
     )
 
     # -----------------------------------------

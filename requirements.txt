@@ -19,3 +19,5 @@ docx2txt
 langchain-tavily
 tavily-python
 sqlalchemy
+
+pydantic-settings

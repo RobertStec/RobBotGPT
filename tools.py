@@ -1,9 +1,11 @@
+import logging
 import ast
 import operator
 import re
 import math
-from dotenv import load_dotenv
+
 from langchain_core.tools import tool
+from core.config import settings
 from langchain_tavily import TavilySearch
 
 from database import save_memory, search_memory
@@ -15,7 +17,9 @@ from langgraph.types import interrupt
 from langgraph.prebuilt import ToolRuntime
 
 
-load_dotenv()
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_thread_id(runtime: ToolRuntime) -> str:
@@ -37,6 +41,11 @@ def get_thread_id(runtime: ToolRuntime) -> str:
 
     return thread_id
 
+if settings.tavily_api_key is not None:
+    os.environ.setdefault(
+        "TAVILY_API_KEY",
+        settings.tavily_api_key.get_secret_value(),
+    )
 
 web_search = TavilySearch(
     max_results=5,
@@ -395,10 +404,10 @@ def calculator(expression: str) -> str:
             f"{error}"
         )
 
-    except Exception as error:
+    except Exception:
 
-        print(
-            f"[TOOL ERROR][calculator] {error}"
+        logger.exception(
+            "Unexpected error in calculator"
         )
 
         return (
@@ -443,7 +452,22 @@ def get_stock_price(symbol: str) -> dict:
         Latest stock quote information returned by Alpha Vantage.
     """
 
-    api_key = os.getenv("ALPHA_VANTAGE_API_KEY")
+    api_key = (
+        settings.alpha_vantage_api_key
+    )
+
+    if api_key is None:
+        return {
+            "status": "error",
+            "message": (
+                "Alpha Vantage API key "
+                "is missing."
+            ),
+        }
+
+    api_key_value = (
+        api_key.get_secret_value()
+    )
 
     if not api_key:
         return {
@@ -470,7 +494,7 @@ def get_stock_price(symbol: str) -> dict:
     params = {
         "function": "GLOBAL_QUOTE",
         "symbol": symbol,
-        "apikey": api_key
+        "apikey": api_key_value,
     }
 
     try:
@@ -538,8 +562,9 @@ def get_stock_price(symbol: str) -> dict:
 
     except requests.RequestException as error:
 
-        print(
-            f"[TOOL ERROR][get_stock_price] {error}"
+        logger.warning(
+            "Stock price service request failed: %s",
+            error,
         )
 
         return {
@@ -547,7 +572,7 @@ def get_stock_price(symbol: str) -> dict:
             "message": (
                 "Could not connect to "
                 "the stock price service."
-            )
+            ),
         }
 
     except ValueError:
@@ -556,10 +581,10 @@ def get_stock_price(symbol: str) -> dict:
             "message": "Alpha Vantage returned an invalid JSON response."
         }
 
-    except Exception as error:
+    except Exception:
 
-        print(
-            f"[TOOL ERROR][get_stock_price] {error}"
+        logger.exception(
+            "Unexpected error in get_stock_price"
         )
 
         return {
@@ -567,9 +592,8 @@ def get_stock_price(symbol: str) -> dict:
             "message": (
                 "The stock price tool could not "
                 "complete the request."
-            )
+            ),
         }
-
 
 
 @tool
@@ -670,7 +694,18 @@ def get_current_weather(location: str) -> str:
         )
 
 
-    api_key = os.getenv("OPENWEATHER_API_KEY")
+    api_key = (
+        settings.openweather_api_key
+    )
+
+    if api_key is None:
+        return (
+            "Weather API key is missing."
+        )
+
+    api_key_value = (
+        api_key.get_secret_value()
+    )
 
     if not api_key:
         return (
@@ -685,7 +720,7 @@ def get_current_weather(location: str) -> str:
         geocoding_params = {
             "q": location,
             "limit": 1,
-            "appid": api_key,
+            "appid": api_key_value,
         }
 
         geo_response = requests.get(
@@ -712,7 +747,7 @@ def get_current_weather(location: str) -> str:
         weather_params = {
             "lat": latitude,
             "lon": longitude,
-            "appid": api_key,
+            "appid": api_key_value,
             "units": "metric",
         }
 
@@ -773,8 +808,9 @@ def get_current_weather(location: str) -> str:
 
     except requests.RequestException as error:
 
-        print(
-            f"[TOOL ERROR][get_current_weather] {error}"
+        logger.warning(
+            "Weather service request failed: %s",
+            error,
         )
 
         return (
@@ -784,8 +820,9 @@ def get_current_weather(location: str) -> str:
 
     except (KeyError, TypeError, ValueError) as error:
 
-        print(
-            f"[TOOL ERROR][get_current_weather] {error}"
+        logger.warning(
+            "Unexpected weather API response: %s",
+            error,
         )
 
         return (
@@ -793,10 +830,10 @@ def get_current_weather(location: str) -> str:
             "an unexpected response."
         )
 
-    except Exception as error:
+    except Exception:
 
-        print(
-            f"[TOOL ERROR][get_current_weather] {error}"
+        logger.exception(
+            "Unexpected error in get_current_weather"
         )
 
         return (
@@ -839,10 +876,10 @@ def remember_this(
             memory=memory
         )
 
-    except Exception as error:
+    except Exception:
 
-        print(
-            f"[TOOL ERROR][remember_this] {error}"
+        logger.exception(
+            "Failed to save long-term memory"
         )
 
         return (
@@ -885,10 +922,10 @@ def recall_memory(
             query=query
         )
 
-    except Exception as error:
+    except Exception:
 
-        print(
-            f"[TOOL ERROR][recall_memory] {error}"
+        logger.exception(
+            "Failed to retrieve long-term memory"
         )
 
         return (
