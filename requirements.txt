@@ -9,15 +9,15 @@ langchain-openai
 langchain-core
 langgraph
 langchain-text-splitters
-langgraph-checkpoint-sqlite
+langgraph-checkpoint-postgres
 langsmith
 
-langchain-chroma
-chromadb
 pypdf
 docx2txt
 langchain-tavily
 tavily-python
 sqlalchemy
-
+psycopg[binary]
+pgvector
 pydantic-settings
+alembic

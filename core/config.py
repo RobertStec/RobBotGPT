@@ -13,6 +13,9 @@ from pydantic_settings import (
     SettingsConfigDict,
 )
 
+from sqlalchemy.engine import make_url
+
+
 
 ALLOWED_MODELS = frozenset({
     "gpt-4o-mini",
@@ -79,15 +82,8 @@ class Settings(BaseSettings):
 
     upload_dir: Path = Path("uploads")
 
-    chroma_dir: Path = Path("chroma_db")
+    database_url: str
 
-    database_url: str = (
-        "sqlite:///data/chatbot_memory.db"
-    )
-
-    checkpoint_db_path: Path = Path(
-        "data/langgraph_checkpoints.sqlite"
-    )
 
     # =====================================================
     # RAG
@@ -191,6 +187,26 @@ class Settings(BaseSettings):
             raise ValueError(
                 "APP_RELOAD must be false "
                 "in production."
+            )
+
+        database_backend = (
+            make_url(
+                self.database_url
+            ).get_backend_name()
+        )
+
+        if (
+            self.app_env
+            in {
+                "development",
+                "production",
+            }
+            and database_backend
+            != "postgresql"
+        ):
+            raise ValueError(
+                "DATABASE_URL must use PostgreSQL "
+                "in development and production."
             )
 
         return self

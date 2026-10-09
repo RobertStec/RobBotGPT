@@ -9,7 +9,9 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
-    inspect,
+    ForeignKey,
+    Index,
+    UniqueConstraint,
     text,
 )
 
@@ -23,9 +25,10 @@ from sqlalchemy.orm import (
     sessionmaker,
 )
 
-from core.config import settings
+from pgvector.sqlalchemy import Vector
 
 import json
+
 
 
 
@@ -33,6 +36,7 @@ Base = declarative_base()
 
 _ENGINE_CACHE: dict[str, Engine] = {}
 _SESSION_FACTORY_CACHE: dict[str, sessionmaker] = {}
+
 
 
 def _ensure_sqlite_directory(
@@ -68,8 +72,10 @@ def create_database_engine(
     database_url: str,
 ) -> Engine:
     """
-    Create an SQLAlchemy engine appropriate
-    for the selected database backend.
+    Create an SQLAlchemy engine.
+
+    PostgreSQL is the runtime database backend.
+    SQLite support is retained for isolated tests.
     """
 
     _ensure_sqlite_directory(
@@ -187,6 +193,9 @@ def clear_database_resource_cache() -> None:
 
 
 
+EMBEDDING_DIMENSION = 1536
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -217,37 +226,66 @@ class LongTermMemory(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class RagDocument(Base):
+    __tablename__ = "rag_documents"
+
+    id = Column(Integer, primary_key=True,)
+    thread_id = Column(String, nullable=False, index=True)
+    source_name = Column(String, nullable=False)
+    stored_name = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
 
-def init_db():
+class RagChunk(Base):
+    __tablename__ = "rag_chunks"
+
+    id = Column(Integer, primary_key=True)
+    document_id = Column(Integer,
+        ForeignKey("rag_documents.id", ondelete="CASCADE"), nullable=False, index=True)
+    page = Column(Integer, nullable=True)
+    chunk_index = Column(Integer, nullable=False)
+    content = Column(Text, nullable=False)
+    embedding = Column(
+        Vector(EMBEDDING_DIMENSION), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "chunk_index",
+            name=(
+                "uq_rag_chunks_"
+                "document_chunk"
+            ),
+        ),
+        Index(
+            "ix_rag_chunks_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={
+                "embedding":
+                    "vector_cosine_ops"
+            },
+        ),
+    )
+
+
+
+def init_db() -> None:
+    """
+    Verify that the configured database is reachable.
+
+    Database schema creation and migrations are
+    managed exclusively by Alembic.
+    """
+
     engine = get_engine()
 
-    Base.metadata.create_all(
-        bind=engine
-    )
-
-    inspector = inspect(
-        engine
-    )
-
-    columns = {
-        column["name"]
-        for column
-        in inspector.get_columns(
-            "chat_messages"
+    with engine.connect() as connection:
+        connection.execute(
+            text("SELECT 1")
         )
-    }
 
-    if "sources" not in columns:
-
-        with engine.begin() as connection:
-
-            connection.execute(
-                text(
-                    "ALTER TABLE chat_messages "
-                    "ADD COLUMN sources TEXT"
-                )
-            )
 
 
 def create_or_update_conversation(thread_id: str, first_message: str | None = None):

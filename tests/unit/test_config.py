@@ -18,9 +18,7 @@ def test_settings_default_values(
         "EMBEDDING_MODEL",
         "DATA_DIR",
         "UPLOAD_DIR",
-        "CHROMA_DIR",
         "DATABASE_URL",
-        "CHECKPOINT_DB_PATH",
         "RAG_CHUNK_SIZE",
         "RAG_CHUNK_OVERLAP",
         "RAG_TOP_K",
@@ -37,7 +35,11 @@ def test_settings_default_values(
         )
 
     settings = Settings(
-        _env_file=None
+        _env_file=None,
+        database_url=(
+            "postgresql+psycopg://"
+            "user:password@localhost:5433/test_db"
+        ),
     )
 
     assert (
@@ -52,7 +54,10 @@ def test_settings_default_values(
 
     assert (
         settings.database_url
-        == "sqlite:///data/chatbot_memory.db"
+        == (
+            "postgresql+psycopg://"
+            "user:password@localhost:5433/test_db"
+        )
     )
 
     assert (
@@ -65,10 +70,6 @@ def test_settings_default_values(
         == Path("uploads")
     )
 
-    assert (
-        settings.chroma_dir
-        == Path("chroma_db")
-    )
 
     assert settings.rag_chunk_size == 900
     assert settings.rag_chunk_overlap == 150
@@ -87,6 +88,8 @@ def test_settings_default_values(
     assert settings.is_development is True
     assert settings.is_test is False
     assert settings.is_production is False
+
+
 
 
 def test_settings_reads_environment_variables(
@@ -412,4 +415,66 @@ def test_secret_values_are_not_exposed_in_repr(
     assert (
         "super-secret-openai-key"
         not in repr(settings)
+    )
+
+
+
+
+def test_settings_allows_sqlite_in_test_environment():
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_url="sqlite:///:memory:",
+    )
+
+    assert (
+        settings.database_url
+        == "sqlite:///:memory:"
+    )
+
+
+
+
+@pytest.mark.parametrize(
+    "app_env",
+    [
+        "development",
+        "production",
+    ],
+)
+def test_settings_rejects_sqlite_outside_test_environment(
+    app_env,
+):
+    kwargs = {
+        "_env_file": None,
+        "app_env": app_env,
+        "database_url": "sqlite:///app.db",
+    }
+
+    if app_env == "production":
+        kwargs["app_reload"] = False
+
+    with pytest.raises(
+        ValueError,
+        match="must use PostgreSQL",
+    ):
+        Settings(**kwargs)
+
+
+
+
+def test_settings_allows_postgresql_in_development():
+    settings = Settings(
+        _env_file=None,
+        app_env="development",
+        database_url=(
+            "postgresql+psycopg://"
+            "user:password@localhost:5433/db"
+        ),
+    )
+
+    assert (
+        settings.database_url.startswith(
+            "postgresql+psycopg://"
+        )
     )

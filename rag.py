@@ -1,18 +1,20 @@
 from core.config import settings
 
 from pathlib import Path
-from typing import List
+from functools import lru_cache
 
-from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-from functools import lru_cache
-
 from pypdf import PdfReader
 import docx2txt
 
+from database import (
+    RagChunk,
+    RagDocument,
+    create_session,
+)
 
 
 
@@ -21,9 +23,6 @@ settings.upload_dir.mkdir(
     exist_ok=True
 )
 
-settings.chroma_dir.mkdir(
-    exist_ok=True
-)
 
 
 @lru_cache(maxsize=1)
@@ -41,38 +40,13 @@ def get_embeddings() -> OpenAIEmbeddings:
     )
 
 
-@lru_cache(maxsize=1)
-def get_vectorstore() -> Chroma:
-    """
-    Create and cache the Chroma vector store.
-
-    Initialization happens only when RAG
-    functionality is actually used.
-    """
-
-    settings.chroma_dir.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    return Chroma(
-        collection_name="agentic_chatbot_docs",
-        embedding_function=get_embeddings(),
-        persist_directory=str(
-            settings.chroma_dir
-        ),
-    )
 
 
 def clear_rag_resource_cache() -> None:
     """
     Clear cached RAG infrastructure.
-
-    Mainly useful for tests and controlled
-    reinitialization.
     """
 
-    get_vectorstore.cache_clear()
     get_embeddings.cache_clear()
 
 
@@ -187,100 +161,182 @@ def add_document_to_rag(
         source_documents
     )
 
-    for index, doc in enumerate(
-        docs,
-        start=1
-    ):
-        doc.metadata["chunk_index"] = index
+    texts = [
+        doc.page_content
+        for doc in docs
+    ]
 
-    vectorstore = get_vectorstore()
+    embeddings = (
+        get_embeddings()
+        .embed_documents(texts)
+    )
 
-    vectorstore.add_documents(docs)
+    if len(embeddings) != len(docs):
+        raise RuntimeError(
+            "Embedding count does not match "
+            "document chunk count."
+        )
+
+
+    db = create_session()
+
+    try:
+        rag_document = RagDocument(
+            thread_id=thread_id,
+            source_name=source_name,
+            stored_name=stored_name,
+        )
+
+        db.add(rag_document)
+
+        db.flush()
+
+        rag_chunks = [
+            RagChunk(
+                document_id=rag_document.id,
+                page=doc.metadata.get("page"),
+                chunk_index=index,
+                content=doc.page_content,
+                embedding=embedding,
+            )
+            for index, (
+                doc,
+                embedding,
+            ) in enumerate(
+                zip(
+                    docs,
+                    embeddings,
+                    strict=True,
+                ),
+                start=1,
+            )
+        ]
+
+        db.add_all(rag_chunks)
+
+        db.commit()
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
 
     return {
         "filename": source_name,
-        "chunks": len(docs)
+        "chunks": len(docs),
     }
+
+
 
 
 
 def retrieve_from_rag(
     query: str,
     thread_id: str,
-    k: int = 4) -> dict:
+    k: int = 4,
+) -> dict:
 
-    vectorstore = get_vectorstore()
-
-    docs = vectorstore.similarity_search(
-        query,
-        k=k,
-        filter={
-            "thread_id": thread_id
-        }
+    query_embedding = (
+        get_embeddings()
+        .embed_query(query)
     )
 
-    if not docs:
+    db = create_session()
+
+    try:
+        rows = (
+            db.query(
+                RagChunk,
+                RagDocument,
+            )
+            .join(
+                RagDocument,
+                RagChunk.document_id
+                == RagDocument.id,
+            )
+            .filter(
+                RagDocument.thread_id
+                == thread_id
+            )
+            .order_by(
+                RagChunk.embedding.cosine_distance(
+                    query_embedding
+                )
+            )
+            .limit(k)
+            .all()
+        )
+
+        if not rows:
+            return {
+                "context": "",
+                "sources": [],
+            }
+
+        context_parts = []
+        sources = []
+
+        for chunk, document in rows:
+
+            source = (
+                document.source_name
+                or "uploaded document"
+            )
+
+            page = chunk.page
+            chunk_index = (
+                chunk.chunk_index
+            )
+
+            if page is not None:
+                context_parts.append(
+                    f"[Source: {source}, "
+                    f"page: {page}]\n"
+                    f"{chunk.content}"
+                )
+            else:
+                context_parts.append(
+                    f"[Source: {source}]\n"
+                    f"{chunk.content}"
+                )
+
+            sources.append({
+                "source": source,
+                "page": page,
+                "chunk_index": chunk_index,
+            })
+
+        unique_sources = []
+        seen = set()
+
+        for source in sources:
+
+            key = (
+                source["source"],
+                source["page"]
+                if source["page"] is not None
+                else source["chunk_index"],
+            )
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            unique_sources.append(
+                source
+            )
+
         return {
-            "context": "",
-            "sources": []
+            "context": "\n\n".join(
+                context_parts
+            ),
+            "sources": unique_sources,
         }
 
-    context_parts = []
-    sources = []
-
-    for doc in docs:
-
-        source = doc.metadata.get(
-            "source",
-            "uploaded document"
-        )
-
-        page = doc.metadata.get("page")
-
-        chunk_index = doc.metadata.get(
-            "chunk_index"
-        )
-
-        if page is not None:
-            context_parts.append(
-                f"[Source: {source}, page: {page}]\n"
-                f"{doc.page_content}"
-            )
-        else:
-            context_parts.append(
-                f"[Source: {source}]\n"
-                f"{doc.page_content}"
-            )
-
-        sources.append({
-            "source": source,
-            "page": page,
-            "chunk_index": chunk_index,
-        })
-
-    unique_sources = []
-
-    seen = set()
-
-    for source in sources:
-
-        key = (
-            source["source"],
-            source["page"]
-                if source["page"] is not None
-                else source["chunk_index"]
-        )
-
-        if key in seen:
-            continue
-
-        seen.add(key)
-        unique_sources.append(source)
-
-    return {
-        "context": "\n\n".join(context_parts),
-        "sources": unique_sources
-    }
+    finally:
+        db.close()
 
 
 
@@ -290,166 +346,156 @@ def delete_document_from_rag(
     stored_name: str,
 ) -> dict:
     """
-    Delete one uploaded document and its chunks
-    without affecting other documents in the thread.
+    Delete one uploaded document, its RAG chunks,
+    and its physical uploaded file.
+
+    RagChunk rows are removed by PostgreSQL through
+    ON DELETE CASCADE.
     """
 
-    vectorstore = get_vectorstore()
+    db = create_session()
 
-    result = vectorstore.get(
-        where={
-            "thread_id": thread_id
-        },
-        include=[
-            "metadatas"
-        ],
-    )
-
-    ids = (
-        result.get("ids", [])
-        or []
-    )
-
-    metadatas = (
-        result.get("metadatas", [])
-        or []
-    )
-
-    ids_to_delete = []
-
-    for document_id, metadata in zip(
-        ids,
-        metadatas,
-    ):
-        if not metadata:
-            continue
-
-        metadata_stored_name = (
-            metadata.get("stored_name")
+    try:
+        document = (
+            db.query(RagDocument)
+            .filter(
+                RagDocument.thread_id
+                == thread_id,
+                RagDocument.stored_name
+                == stored_name,
+            )
+            .first()
         )
 
-        if not metadata_stored_name:
-            metadata_stored_name = (
-                metadata.get("source")
+        deleted_chunks = 0
+
+        if document is not None:
+            deleted_chunks = (
+                db.query(RagChunk)
+                .filter(
+                    RagChunk.document_id
+                    == document.id
+                )
+                .count()
             )
 
-        if (
-            metadata_stored_name
-            == stored_name
-        ):
-            ids_to_delete.append(
-                document_id
-            )
-
-    if ids_to_delete:
-        vectorstore.delete(
-            ids=ids_to_delete
-        )
-
-    file_path = (
-        settings.upload_dir
-        / stored_name
-    )
-
-    deleted_files = 0
-
-    if (
-        file_path.exists()
-        and file_path.is_file()
-    ):
-        file_path.unlink()
-
-        deleted_files = 1
-
-    return {
-        "deleted_chunks": len(
-            ids_to_delete
-        ),
-        "deleted_files": deleted_files,
-    }
-
-
-
-
-
-def delete_thread_documents(thread_id: str) -> dict:
-    """
-    Delete all ChromaDB documents and uploaded files
-    associated with a conversation thread.
-    """
-
-    vectorstore = get_vectorstore()
-
-    result = vectorstore.get(
-        where={"thread_id": thread_id},
-        include=["metadatas"]
-    )
-
-    ids = result.get("ids", []) or []
-    metadatas = result.get("metadatas", []) or []
-
-    # -----------------------------------------
-    # Collect physical uploaded file names
-    # -----------------------------------------
-
-    stored_files = set()
-
-    for metadata in metadatas:
-
-        if not metadata:
-            continue
-
-        # New metadata format
-        stored_name = metadata.get(
-            "stored_name"
-        )
-
-        # Backward compatibility with documents
-        # uploaded before stored_name was introduced.
-        if not stored_name:
-            stored_name = metadata.get(
-                "source"
-            )
-
-        if stored_name:
-            stored_files.add(
-                stored_name
-            )
-
-
-    # -----------------------------------------
-    # Delete uploaded physical files
-    # -----------------------------------------
-
-    deleted_files = 0
-
-    for stored_name in stored_files:
-
+        # Delete physical file first.
+        # If this fails, database data remains
+        # available for a safe retry.
         file_path = (
             settings.upload_dir
             / stored_name
         )
+
+        deleted_files = 0
 
         if (
             file_path.exists()
             and file_path.is_file()
         ):
             file_path.unlink()
+            deleted_files = 1
 
-            deleted_files += 1
+        if document is not None:
+            db.delete(document)
+
+            # RagChunk rows are deleted through:
+            # ON DELETE CASCADE
+            db.commit()
+
+        return {
+            "deleted_chunks": deleted_chunks,
+            "deleted_files": deleted_files,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
 
 
-    # -----------------------------------------
-    # Delete chunks from ChromaDB
-    # -----------------------------------------
 
-    if ids:
-        vectorstore.delete(
-            ids=ids
-        )       
-        
 
-    return {
-        "deleted_chunks": len(ids),
-        "deleted_files": deleted_files
-    }
+def delete_thread_documents(
+    thread_id: str,
+) -> dict:
+    """
+    Delete all uploaded documents, RAG chunks,
+    and physical files associated with a thread.
+    """
+
+    db = create_session()
+
+    try:
+        documents = (
+            db.query(RagDocument)
+            .filter(
+                RagDocument.thread_id
+                == thread_id
+            )
+            .all()
+        )
+
+        if not documents:
+            return {
+                "deleted_chunks": 0,
+                "deleted_files": 0,
+            }
+
+        document_ids = [
+            document.id
+            for document in documents
+        ]
+
+        deleted_chunks = (
+            db.query(RagChunk)
+            .filter(
+                RagChunk.document_id.in_(
+                    document_ids
+                )
+            )
+            .count()
+        )
+
+        stored_names = {
+            document.stored_name
+            for document in documents
+            if document.stored_name
+        }
+
+        # Delete files first.
+        # Database rows remain intact if filesystem
+        # cleanup fails, which makes retry possible.
+        deleted_files = 0
+
+        for stored_name in stored_names:
+            file_path = (
+                settings.upload_dir
+                / stored_name
+            )
+
+            if (
+                file_path.exists()
+                and file_path.is_file()
+            ):
+                file_path.unlink()
+                deleted_files += 1
+
+        for document in documents:
+            db.delete(document)
+
+        db.commit()
+
+        return {
+            "deleted_chunks": deleted_chunks,
+            "deleted_files": deleted_files,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()

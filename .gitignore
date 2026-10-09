@@ -238,8 +238,6 @@ data/*.sqlite
 data/*.sqlite-shm
 data/*.sqlite-wal
 
-# Vector database
-chroma_db/
 
 # Uploaded files
 uploads/

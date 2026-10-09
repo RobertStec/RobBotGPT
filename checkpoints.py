@@ -1,18 +1,24 @@
-import sqlite3
-
 from dataclasses import dataclass
-from pathlib import Path
 from threading import Lock
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool
+
+from sqlalchemy.engine import make_url
+
+from langgraph.checkpoint.postgres import (
+    PostgresSaver,
+)
 
 from core.config import settings
 
 
+
+
 @dataclass
 class CheckpointResource:
-    connection: sqlite3.Connection
-    checkpointer: SqliteSaver
+    pool: ConnectionPool
+    checkpointer: PostgresSaver
 
 
 _CHECKPOINT_RESOURCE_CACHE: dict[
@@ -23,68 +29,108 @@ _CHECKPOINT_RESOURCE_CACHE: dict[
 _CHECKPOINT_CACHE_LOCK = Lock()
 
 
-def _resolve_checkpoint_path(
-    checkpoint_path: str | Path | None = None,
-) -> Path:
+
+
+def _resolve_checkpoint_database_url(
+    database_url: str | None = None,
+) -> str:
     """
-    Resolve the checkpoint database path and ensure
-    that its parent directory exists.
+    Resolve the PostgreSQL connection URL used
+    by the LangGraph checkpoint store.
+
+    SQLAlchemy uses:
+        postgresql+psycopg://...
+
+    Psycopg expects:
+        postgresql://...
     """
 
-    path = Path(
-        checkpoint_path
-        or settings.checkpoint_db_path
-    ).expanduser().resolve()
-
-    path.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+    url = make_url(
+        database_url
+        or settings.database_url
     )
 
-    return path
+    if (
+        url.get_backend_name()
+        != "postgresql"
+    ):
+        raise ValueError(
+            "LangGraph PostgreSQL checkpointing "
+            "requires a PostgreSQL database URL."
+        )
+
+    return (
+        url.set(
+            drivername="postgresql"
+        )
+        .render_as_string(
+            hide_password=False
+        )
+    )
+
+
 
 
 def create_checkpoint_resource(
-    checkpoint_path: str | Path | None = None,
+    database_url: str | None = None,
 ) -> CheckpointResource:
     """
-    Create a SQLite connection and LangGraph
-    SqliteSaver for the selected checkpoint database.
+    Create PostgreSQL connection pool and
+    LangGraph PostgresSaver.
     """
 
-    path = _resolve_checkpoint_path(
-        checkpoint_path
+    conninfo = (
+        _resolve_checkpoint_database_url(
+            database_url
+        )
     )
 
-    connection = sqlite3.connect(
-        str(path),
-        check_same_thread=False,
+    pool = ConnectionPool(
+        conninfo=conninfo,
+        min_size=1,
+        max_size=5,
+        kwargs={
+            "autocommit": True,
+            "prepare_threshold": 0,
+            "row_factory": dict_row,
+        },
+        open=True,
     )
 
-    checkpointer = SqliteSaver(
-        connection
-    )
+    try:
+        checkpointer = PostgresSaver(
+            pool
+        )
+
+        checkpointer.setup()
+
+    except Exception:
+        pool.close()
+        raise
 
     return CheckpointResource(
-        connection=connection,
+        pool=pool,
         checkpointer=checkpointer,
     )
 
 
+
+
 def get_checkpoint_resource(
-    checkpoint_path: str | Path | None = None,
+    database_url: str | None = None,
 ) -> CheckpointResource:
     """
-    Return a cached checkpoint resource.
+    Return cached checkpoint resource.
 
-    The resource is initialized lazily on first use.
+    The resource is initialized lazily
+    on first use.
     """
 
-    path = _resolve_checkpoint_path(
-        checkpoint_path
+    cache_key = (
+        _resolve_checkpoint_database_url(
+            database_url
+        )
     )
-
-    cache_key = str(path)
 
     with _CHECKPOINT_CACHE_LOCK:
         if (
@@ -94,7 +140,7 @@ def get_checkpoint_resource(
             _CHECKPOINT_RESOURCE_CACHE[
                 cache_key
             ] = create_checkpoint_resource(
-                path
+                cache_key
             )
 
         return _CHECKPOINT_RESOURCE_CACHE[
@@ -102,16 +148,20 @@ def get_checkpoint_resource(
         ]
 
 
+
+
 def get_checkpointer(
-    checkpoint_path: str | Path | None = None,
-) -> SqliteSaver:
+    database_url: str | None = None,
+) -> PostgresSaver:
     """
-    Return the cached LangGraph checkpointer.
+    Return cached LangGraph checkpointer.
     """
 
     return get_checkpoint_resource(
-        checkpoint_path
+        database_url
     ).checkpointer
+
+
 
 
 def delete_thread_checkpoints(
@@ -129,13 +179,12 @@ def delete_thread_checkpoints(
     )
 
 
+
+
 def clear_checkpoint_resource_cache() -> None:
     """
-    Close checkpoint database connections
-    and clear cached resources.
-
-    Primarily useful for tests and controlled
-    application shutdown.
+    Close PostgreSQL connection pools and
+    clear cached checkpoint resources.
     """
 
     with _CHECKPOINT_CACHE_LOCK:
@@ -146,4 +195,4 @@ def clear_checkpoint_resource_cache() -> None:
         _CHECKPOINT_RESOURCE_CACHE.clear()
 
     for resource in resources:
-        resource.connection.close()
+        resource.pool.close()

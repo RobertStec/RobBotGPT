@@ -1,6 +1,5 @@
 import importlib
 import json
-import sqlite3
 
 import pytest
 
@@ -22,8 +21,8 @@ from langgraph.prebuilt import (
     tools_condition,
 )
 
-from langgraph.checkpoint.sqlite import (
-    SqliteSaver,
+from langgraph.checkpoint.memory import (
+    InMemorySaver,
 )
 
 from state import AgentState
@@ -144,22 +143,8 @@ def hitl_chatbot_node(state: AgentState):
 # =========================================================
 
 @pytest.fixture
-def hitl_agent(
-    tmp_path,
-):
-    checkpoint_path = (
-        tmp_path
-        / "hitl_checkpoints.sqlite"
-    )
-
-    connection = sqlite3.connect(
-        str(checkpoint_path),
-        check_same_thread=False,
-    )
-
-    checkpointer = SqliteSaver(
-        connection
-    )
+def hitl_agent():
+    checkpointer = InMemorySaver()
 
     workflow = StateGraph(
         AgentState
@@ -192,13 +177,9 @@ def hitl_agent(
         "chatbot",
     )
 
-    graph = workflow.compile(
+    return workflow.compile(
         checkpointer=checkpointer
     )
-
-    yield graph
-
-    connection.close()
 
 
 

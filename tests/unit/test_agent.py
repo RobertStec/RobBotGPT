@@ -122,7 +122,7 @@ def test_build_agent_creates_expected_langgraph(
     )
 
     # -----------------------------------------
-    # SQLite checkpointer
+    # LangGraph checkpointer
     # -----------------------------------------
 
     

@@ -618,3 +618,28 @@ def test_conversation_exists(
         )
         is True
     )
+
+
+
+# Test database connection
+
+def test_init_db_checks_database_connection(
+    mocker,
+):
+    mock_engine = mocker.MagicMock()
+
+    mock_connection = (
+        mock_engine.connect.return_value
+        .__enter__.return_value
+    )
+
+    mocker.patch(
+        "database.get_engine",
+        return_value=mock_engine,
+    )
+
+    database.init_db()
+
+    mock_engine.connect.assert_called_once_with()
+
+    mock_connection.execute.assert_called_once()

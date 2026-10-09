@@ -1,48 +1,80 @@
+import pytest
 import checkpoints
 
 
+
+
 def test_create_checkpoint_resource(
-    tmp_path,
     mocker,
 ):
-    checkpoint_path = (
-        tmp_path
-        / "checkpoints.sqlite"
+    database_url = (
+        "postgresql+psycopg://"
+        "user:password@localhost:5433/test_db"
     )
 
-    mock_connection = mocker.Mock()
+    mock_pool = mocker.Mock()
 
-    mock_connect = mocker.patch(
-        "checkpoints.sqlite3.connect",
-        return_value=mock_connection,
+    mock_pool_class = mocker.patch(
+        "checkpoints.ConnectionPool",
+        return_value=mock_pool,
     )
 
     mock_checkpointer = mocker.Mock()
 
     mock_saver = mocker.patch(
-        "checkpoints.SqliteSaver",
+        "checkpoints.PostgresSaver",
         return_value=mock_checkpointer,
     )
 
     resource = (
         checkpoints.create_checkpoint_resource(
-            checkpoint_path
+            database_url
         )
     )
 
-    mock_connect.assert_called_once_with(
-        str(checkpoint_path.resolve()),
-        check_same_thread=False,
-    )
+    mock_pool_class.assert_called_once()
 
-    mock_saver.assert_called_once_with(
-        mock_connection
+    call_kwargs = (
+        mock_pool_class.call_args.kwargs
     )
 
     assert (
-        resource.connection
-        is mock_connection
+        call_kwargs["conninfo"]
+        ==
+        "postgresql://"
+        "user:password@localhost:5433/test_db"
     )
+
+    assert call_kwargs["min_size"] == 1
+    assert call_kwargs["max_size"] == 5
+    assert call_kwargs["open"] is True
+
+    assert (
+        call_kwargs["kwargs"]["autocommit"]
+        is True
+    )
+
+    assert (
+        call_kwargs["kwargs"][
+            "prepare_threshold"
+        ]
+        == 0
+    )
+
+    assert (
+        call_kwargs["kwargs"][
+            "row_factory"
+        ]
+        is checkpoints.dict_row
+    )
+
+    mock_saver.assert_called_once_with(
+        mock_pool
+    )
+
+    mock_checkpointer.setup.assert_called_once_with()
+
+    assert resource.pool is mock_pool
 
     assert (
         resource.checkpointer
@@ -53,14 +85,13 @@ def test_create_checkpoint_resource(
 
 
 def test_get_checkpointer_caches_resource(
-    tmp_path,
     mocker,
 ):
     checkpoints.clear_checkpoint_resource_cache()
 
-    checkpoint_path = (
-        tmp_path
-        / "cached.sqlite"
+    database_url = (
+        "postgresql://"
+        "user:pass@localhost/test_db"
     )
 
     mock_resource = mocker.Mock()
@@ -71,25 +102,26 @@ def test_get_checkpointer_caches_resource(
     )
 
     first = checkpoints.get_checkpoint_resource(
-        checkpoint_path
+        database_url
     )
 
     second = checkpoints.get_checkpoint_resource(
-        checkpoint_path
+        database_url
     )
 
     assert first is mock_resource
     assert second is mock_resource
 
-    mock_create.assert_called_once()
+    mock_create.assert_called_once_with(
+        database_url
+    )
 
     checkpoints.clear_checkpoint_resource_cache()
 
 
 
 
-def test_checkpoint_cache_is_separated_by_path(
-    tmp_path,
+def test_checkpoint_cache_is_separated_by_database_url(
     mocker,
 ):
     checkpoints.clear_checkpoint_resource_cache()
@@ -106,11 +138,11 @@ def test_checkpoint_cache_is_separated_by_path(
     )
 
     first = checkpoints.get_checkpoint_resource(
-        tmp_path / "first.sqlite"
+        "postgresql://user:pass@localhost/db1"
     )
 
     second = checkpoints.get_checkpoint_resource(
-        tmp_path / "second.sqlite"
+        "postgresql://user:pass@localhost/db2"
     )
 
     assert first is first_resource
@@ -143,17 +175,16 @@ def test_delete_thread_checkpoints(
 
 
 
-def test_clear_checkpoint_resource_cache_closes_connections(
-    tmp_path,
+def test_clear_checkpoint_resource_cache_closes_pools(
     mocker,
 ):
     checkpoints.clear_checkpoint_resource_cache()
 
-    mock_connection = mocker.Mock()
+    mock_pool = mocker.Mock()
     mock_checkpointer = mocker.Mock()
 
     resource = checkpoints.CheckpointResource(
-        connection=mock_connection,
+        pool=mock_pool,
         checkpointer=mock_checkpointer,
     )
 
@@ -163,9 +194,44 @@ def test_clear_checkpoint_resource_cache_closes_connections(
     )
 
     checkpoints.get_checkpoint_resource(
-        tmp_path / "cleanup.sqlite"
+        "postgresql://user:pass@localhost/test_db"
     )
 
     checkpoints.clear_checkpoint_resource_cache()
 
-    mock_connection.close.assert_called_once()
+    mock_pool.close.assert_called_once_with()
+
+
+
+
+
+def test_create_checkpoint_resource_closes_pool_when_setup_fails(
+    mocker,
+):
+    mock_pool = mocker.Mock()
+
+    mocker.patch(
+        "checkpoints.ConnectionPool",
+        return_value=mock_pool,
+    )
+
+    mock_checkpointer = mocker.Mock()
+
+    mock_checkpointer.setup.side_effect = (
+        RuntimeError("setup failed")
+    )
+
+    mocker.patch(
+        "checkpoints.PostgresSaver",
+        return_value=mock_checkpointer,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="setup failed",
+    ):
+        checkpoints.create_checkpoint_resource(
+            "postgresql://user:pass@localhost/test_db"
+        )
+
+    mock_pool.close.assert_called_once_with()

@@ -135,7 +135,7 @@ def retrieve_node(
     writer: StreamWriter,
 ):
     """
-    Retrieve relevant document context from ChromaDB.
+    Retrieve relevant document context from PostgreSQL with pgvector.
     """
 
     query = get_latest_user_message(state)

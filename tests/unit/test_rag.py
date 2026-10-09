@@ -1,22 +1,7 @@
 import pytest
 
-from langchain_core.documents import Document
-
 import rag
 
-
-
-@pytest.fixture
-def mock_vectorstore(mocker):
-    store = mocker.Mock()
-
-    mocker.patch.object(
-        rag,
-        "get_vectorstore",
-        return_value=store,
-    )
-
-    return store
 
 
 
@@ -52,6 +37,95 @@ def test_read_file_text_reads_text_files(
 
 
 
+@pytest.fixture
+def mock_pgvector_storage(
+    mocker,
+):
+    embeddings = mocker.Mock()
+
+    embeddings.embed_documents.side_effect = (
+        lambda texts: [
+            [0.1, 0.2, 0.3]
+            for _ in texts
+        ]
+    )
+
+    mocker.patch.object(
+        rag,
+        "get_embeddings",
+        return_value=embeddings,
+    )
+
+    db = mocker.Mock()
+
+    def assign_document_id():
+        document = (
+            db.add
+            .call_args
+            .args[0]
+        )
+
+        document.id = 123
+
+    db.flush.side_effect = (
+        assign_document_id
+    )
+
+    mocker.patch.object(
+        rag,
+        "create_session",
+        return_value=db,
+    )
+
+    return embeddings, db
+
+
+
+@pytest.fixture
+def mock_pgvector_retrieval(
+    mocker,
+):
+    embeddings = mocker.Mock()
+
+    embeddings.embed_query.return_value = [
+        0.1,
+        0.2,
+        0.3,
+    ]
+
+    mocker.patch.object(
+        rag,
+        "get_embeddings",
+        return_value=embeddings,
+    )
+
+    db = mocker.Mock()
+
+    mocker.patch.object(
+        rag,
+        "create_session",
+        return_value=db,
+    )
+
+    return embeddings, db
+
+
+
+@pytest.fixture
+def mock_pgvector_delete(
+    mocker,
+):
+    db = mocker.Mock()
+
+    mocker.patch.object(
+        rag,
+        "create_session",
+        return_value=db,
+    )
+
+    return db
+
+
 
 # Nieobsługiwany format
 
@@ -80,13 +154,20 @@ def test_read_file_text_rejects_unsupported_file_type(
 
 def test_add_document_to_rag_creates_chunks_with_metadata(
     tmp_path,
-    mock_vectorstore,
+    mock_pgvector_storage,
 ):
-    file_path = tmp_path / "stored_document.txt"
+    file_path = (
+        tmp_path
+        / "stored_document.txt"
+    )
 
     file_path.write_text(
         "RobBotGPT uses LangGraph and LangChain.",
         encoding="utf-8",
+    )
+
+    embeddings, db = (
+        mock_pgvector_storage
     )
 
     result = rag.add_document_to_rag(
@@ -100,33 +181,69 @@ def test_add_document_to_rag_creates_chunks_with_metadata(
         "chunks": 1,
     }
 
-    mock_vectorstore.add_documents.assert_called_once()
-
-    documents = (
-        mock_vectorstore
-        .add_documents
-        .call_args
-        .args[0]
+    embeddings.embed_documents.assert_called_once_with(
+        [
+            "RobBotGPT uses LangGraph and LangChain."
+        ]
     )
 
-    assert len(documents) == 1
-
-    document = documents[0]
-
-    assert (
-        document.page_content
-        == "RobBotGPT uses LangGraph and LangChain."
+    stored_document = (
+        db.add.call_args.args[0]
     )
 
-    assert document.metadata["thread_id"] == "thread-123"
-    assert document.metadata["source"] == "project.txt"
+    assert isinstance(
+        stored_document,
+        rag.RagDocument,
+    )
 
     assert (
-        document.metadata["stored_name"]
+        stored_document.thread_id
+        == "thread-123"
+    )
+
+    assert (
+        stored_document.source_name
+        == "project.txt"
+    )
+
+    assert (
+        stored_document.stored_name
         == "stored_document.txt"
     )
 
-    assert document.metadata["chunk_index"] == 1  
+    db.flush.assert_called_once_with()
+
+    stored_chunks = (
+        db.add_all.call_args.args[0]
+    )
+
+    assert len(stored_chunks) == 1
+
+    chunk = stored_chunks[0]
+
+    assert isinstance(
+        chunk,
+        rag.RagChunk,
+    )
+
+    assert chunk.document_id == 123
+    assert chunk.page is None
+    assert chunk.chunk_index == 1
+
+    assert (
+        chunk.content
+        == "RobBotGPT uses LangGraph and LangChain."
+    )
+
+    assert chunk.embedding == [
+        0.1,
+        0.2,
+        0.3,
+    ]
+
+    db.commit.assert_called_once_with()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
 
 
 
@@ -135,7 +252,7 @@ def test_add_document_to_rag_creates_chunks_with_metadata(
 
 def test_add_document_to_rag_splits_long_document(
     tmp_path,
-    mock_vectorstore,
+    mock_pgvector_storage,
 ):
     file_path = tmp_path / "long.txt"
 
@@ -154,22 +271,27 @@ def test_add_document_to_rag_splits_long_document(
         thread_id="thread-long",
     )
 
-    documents = (
-        mock_vectorstore
-        .add_documents
+    _, db = mock_pgvector_storage
+
+    chunks = (
+        db.add_all
         .call_args
         .args[0]
     )
 
     assert result["chunks"] > 1
-    assert len(documents) > 1
+    assert len(chunks) > 1
 
     assert [
-        doc.metadata["chunk_index"]
-        for doc in documents
+        chunk.chunk_index
+        for chunk in chunks
     ] == list(
-        range(1, len(documents) + 1)
+        range(
+            1,
+            len(chunks) + 1,
+        )
     )
+
 
 
 
@@ -177,13 +299,17 @@ def test_add_document_to_rag_splits_long_document(
 
 def test_add_document_to_rag_rejects_empty_document(
     tmp_path,
-    mock_vectorstore,
+    mock_pgvector_storage,
 ):
     file_path = tmp_path / "empty.txt"
 
     file_path.write_text(
         "   \n   ",
         encoding="utf-8",
+    )
+
+    embeddings, db = (
+        mock_pgvector_storage
     )
 
     with pytest.raises(
@@ -195,7 +321,8 @@ def test_add_document_to_rag_rejects_empty_document(
             thread_id="thread-empty",
         )
 
-    mock_vectorstore.add_documents.assert_not_called()
+    embeddings.embed_documents.assert_not_called()
+    db.add.assert_not_called()
 
 
 
@@ -204,12 +331,19 @@ def test_add_document_to_rag_rejects_empty_document(
 
 def test_add_pdf_preserves_page_numbers(
     tmp_path,
-    mock_vectorstore,
+    mock_pgvector_storage,
     mocker,
 ):
-    file_path = tmp_path / "document.pdf"
+    file_path = (
+        tmp_path
+        / "stored_manual.pdf"
+    )
 
-    file_path.write_bytes(b"fake pdf")
+    file_path.write_bytes(
+        b"fake pdf"
+    )
+
+    _, db = mock_pgvector_storage
 
     page_1 = mocker.Mock()
     page_1.extract_text.return_value = (
@@ -239,29 +373,35 @@ def test_add_pdf_preserves_page_numbers(
         original_filename="manual.pdf",
     )
 
-    documents = (
-        mock_vectorstore
-        .add_documents
+    chunks = (
+        db.add_all
         .call_args
         .args[0]
     )
 
-    assert result["chunks"] == 2
+    assert result == {
+        "filename": "manual.pdf",
+        "chunks": 2,
+    }
 
-    assert len(documents) == 2
+    assert len(chunks) == 2
 
-    assert documents[0].metadata["page"] == 1
-    assert documents[1].metadata["page"] == 2
+    assert chunks[0].page == 1
+    assert chunks[1].page == 2
+
+    assert chunks[0].chunk_index == 1
+    assert chunks[1].chunk_index == 2
 
     assert (
-        documents[0].metadata["thread_id"]
-        == "thread-pdf"
+        chunks[0].content
+        == "Content from page one."
     )
 
     assert (
-        documents[1].metadata["source"]
-        == "manual.pdf"
+        chunks[1].content
+        == "Content from page two."
     )
+
 
 
 
@@ -269,17 +409,45 @@ def test_add_pdf_preserves_page_numbers(
 # Test Retrieval - poprawny filtr thread_id
 
 def test_retrieve_from_rag_filters_by_thread_id(
-    mock_vectorstore,
+    mock_pgvector_retrieval,
 ):
-    mock_vectorstore.similarity_search.return_value = [
-        Document(
-            page_content="LangGraph manages agent workflows.",
-            metadata={
-                "thread_id": "thread-123",
-                "source": "project.pdf",
-                "page": 2,
-                "chunk_index": 3,
-            },
+    embeddings, db = (
+        mock_pgvector_retrieval
+    )
+
+    document = rag.RagDocument(
+        id=10,
+        thread_id="thread-123",
+        source_name="project.pdf",
+        stored_name="stored_project.pdf",
+    )
+
+    chunk = rag.RagChunk(
+        id=20,
+        document_id=10,
+        page=2,
+        chunk_index=3,
+        content=(
+            "LangGraph manages agent workflows."
+        ),
+        embedding=[
+            0.1,
+            0.2,
+            0.3,
+        ],
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = [
+        (
+            chunk,
+            document,
         )
     ]
 
@@ -289,12 +457,17 @@ def test_retrieve_from_rag_filters_by_thread_id(
         k=4,
     )
 
-    mock_vectorstore.similarity_search.assert_called_once_with(
-        "What does LangGraph do?",
-        k=4,
-        filter={
-            "thread_id": "thread-123"
-        },
+    embeddings.embed_query.assert_called_once_with(
+        "What does LangGraph do?"
+    )
+
+    db.query.assert_called_once_with(
+        rag.RagChunk,
+        rag.RagDocument,
+    )
+
+    query.limit.assert_called_once_with(
+        4
     )
 
     assert (
@@ -315,14 +488,27 @@ def test_retrieve_from_rag_filters_by_thread_id(
         }
     ]
 
+    db.close.assert_called_once_with()
+
 
 
 # Test Retrieval bez wyników
 
 def test_retrieve_from_rag_returns_empty_result_when_no_documents(
-    mock_vectorstore,
+    mock_pgvector_retrieval,
 ):
-    mock_vectorstore.similarity_search.return_value = []
+    embeddings, db = (
+        mock_pgvector_retrieval
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = []
 
     result = rag.retrieve_from_rag(
         query="Unknown information",
@@ -335,30 +521,56 @@ def test_retrieve_from_rag_returns_empty_result_when_no_documents(
         "sources": [],
     }
 
+    embeddings.embed_query.assert_called_once_with(
+        "Unknown information"
+    )
+
+    db.close.assert_called_once_with()
+
 
 
 # Test deduplikacji źródeł
 
 def test_retrieve_from_rag_deduplicates_sources(
-    mock_vectorstore,
+    mock_pgvector_retrieval,
 ):
-    mock_vectorstore.similarity_search.return_value = [
-        Document(
-            page_content="First chunk",
-            metadata={
-                "source": "manual.pdf",
-                "page": 5,
-                "chunk_index": 1,
-            },
-        ),
-        Document(
-            page_content="Second chunk",
-            metadata={
-                "source": "manual.pdf",
-                "page": 5,
-                "chunk_index": 2,
-            },
-        ),
+    _, db = (
+        mock_pgvector_retrieval
+    )
+
+    document = rag.RagDocument(
+        id=1,
+        thread_id="thread-123",
+        source_name="manual.pdf",
+        stored_name="stored_manual.pdf",
+    )
+
+    chunk_1 = rag.RagChunk(
+        document_id=1,
+        page=5,
+        chunk_index=1,
+        content="First chunk",
+        embedding=[0.1, 0.2, 0.3],
+    )
+
+    chunk_2 = rag.RagChunk(
+        document_id=1,
+        page=5,
+        chunk_index=2,
+        content="Second chunk",
+        embedding=[0.1, 0.2, 0.3],
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = [
+        (chunk_1, document),
+        (chunk_2, document),
     ]
 
     result = rag.retrieve_from_rag(
@@ -366,10 +578,19 @@ def test_retrieve_from_rag_deduplicates_sources(
         thread_id="thread-123",
     )
 
-    assert len(result["sources"]) == 1
+    assert len(
+        result["sources"]
+    ) == 1
 
-    assert result["sources"][0]["source"] == "manual.pdf"
-    assert result["sources"][0]["page"] == 5
+    assert (
+        result["sources"][0]["source"]
+        == "manual.pdf"
+    )
+
+    assert (
+        result["sources"][0]["page"]
+        == 5
+    )
 
     assert "First chunk" in result["context"]
     assert "Second chunk" in result["context"]
@@ -382,93 +603,152 @@ def test_retrieve_from_rag_deduplicates_sources(
 def test_delete_thread_documents_removes_chunks_and_files(
     tmp_path,
     monkeypatch,
-    mock_vectorstore,
+    mock_pgvector_delete,
+    mocker,
 ):
-    monkeypatch.chdir(tmp_path)
+    upload_dir = (
+        tmp_path
+        / "uploads"
+    )
 
-    uploads = tmp_path / "uploads"
-    uploads.mkdir()
+    upload_dir.mkdir()
 
-    file_1 = uploads / "stored_1.pdf"
-    file_2 = uploads / "stored_2.txt"
+    monkeypatch.setattr(
+        rag.settings,
+        "upload_dir",
+        upload_dir,
+    )
+
+    file_1 = (
+        upload_dir
+        / "stored_1.pdf"
+    )
+
+    file_2 = (
+        upload_dir
+        / "stored_2.txt"
+    )
 
     file_1.write_bytes(b"pdf")
+
     file_2.write_text(
         "text",
         encoding="utf-8",
     )
 
-    mock_vectorstore.get.return_value = {
-        "ids": [
-            "chunk-1",
-            "chunk-2",
-        ],
-        "metadatas": [
-            {
-                "stored_name": "stored_1.pdf",
-                "source": "original.pdf",
-            },
-            {
-                "stored_name": "stored_2.txt",
-                "source": "original.txt",
-            },
-        ],
-    }
-
-    result = rag.delete_thread_documents(
-        "thread-delete"
+    document_1 = rag.RagDocument(
+        id=1,
+        thread_id="thread-delete",
+        source_name="original.pdf",
+        stored_name="stored_1.pdf",
     )
 
-    mock_vectorstore.get.assert_called_once_with(
-        where={
-            "thread_id": "thread-delete"
-        },
-        include=["metadatas"],
+    document_2 = rag.RagDocument(
+        id=2,
+        thread_id="thread-delete",
+        source_name="original.txt",
+        stored_name="stored_2.txt",
     )
 
-    mock_vectorstore.delete.assert_called_once_with(
-        ids=[
-            "chunk-1",
-            "chunk-2",
-        ]
+    db = mock_pgvector_delete
+
+    document_query = mocker.Mock()
+    chunk_query = mocker.Mock()
+
+    db.query.side_effect = [
+        document_query,
+        chunk_query,
+    ]
+
+    (
+        document_query
+        .filter
+        .return_value
+        .all
+        .return_value
+    ) = [
+        document_1,
+        document_2,
+    ]
+
+    (
+        chunk_query
+        .filter
+        .return_value
+        .count
+        .return_value
+    ) = 3
+
+    result = (
+        rag.delete_thread_documents(
+            "thread-delete"
+        )
     )
 
     assert file_1.exists() is False
     assert file_2.exists() is False
 
+    assert db.delete.call_count == 2
+
+    deleted_documents = [
+        call.args[0]
+        for call
+        in db.delete.call_args_list
+    ]
+
+    assert deleted_documents == [
+        document_1,
+        document_2,
+    ]
+
+    db.commit.assert_called_once_with()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
+
     assert result == {
-        "deleted_chunks": 2,
+        "deleted_chunks": 3,
         "deleted_files": 2,
     }
+
 
 
 
 # Brak dokumentów do usunięcia
 
 def test_delete_thread_documents_handles_empty_thread(
-    tmp_path,
-    monkeypatch,
-    mock_vectorstore,
+    mock_pgvector_delete,
+    mocker,
 ):
-    monkeypatch.chdir(tmp_path)
+    db = mock_pgvector_delete
 
-    (tmp_path / "uploads").mkdir()
+    document_query = mocker.Mock()
 
-    mock_vectorstore.get.return_value = {
-        "ids": [],
-        "metadatas": [],
-    }
-
-    result = rag.delete_thread_documents(
-        "unknown-thread"
+    db.query.return_value = (
+        document_query
     )
 
-    mock_vectorstore.delete.assert_not_called()
+    (
+        document_query
+        .filter
+        .return_value
+        .all
+        .return_value
+    ) = []
+
+    result = (
+        rag.delete_thread_documents(
+            "unknown-thread"
+        )
+    )
 
     assert result == {
         "deleted_chunks": 0,
         "deleted_files": 0,
     }
+
+    db.delete.assert_not_called()
+    db.commit.assert_not_called()
+    db.close.assert_called_once_with()
 
 
 
@@ -561,17 +841,40 @@ def test_read_file_text_reads_docx(
 # Test Retrieval bez numeru strony
 
 def test_retrieve_from_rag_handles_source_without_page(
-    mock_vectorstore,
+    mock_pgvector_retrieval,
 ):
-    mock_vectorstore.similarity_search.return_value = [
-        Document(
-            page_content=(
-                "Content from TXT document."
-            ),
-            metadata={
-                "source": "notes.txt",
-                "chunk_index": 3,
-            },
+    _, db = (
+        mock_pgvector_retrieval
+    )
+
+    document = rag.RagDocument(
+        id=1,
+        thread_id="thread-txt",
+        source_name="notes.txt",
+        stored_name="stored_notes.txt",
+    )
+
+    chunk = rag.RagChunk(
+        document_id=1,
+        page=None,
+        chunk_index=3,
+        content=(
+            "Content from TXT document."
+        ),
+        embedding=[0.1, 0.2, 0.3],
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = [
+        (
+            chunk,
+            document,
         )
     ]
 
@@ -595,68 +898,6 @@ def test_retrieve_from_rag_handles_source_without_page(
         }
     ]
 
-
-
-
-# Test Backward compatibility podczas usuwania
-
-def test_delete_thread_documents_supports_old_source_metadata(
-    tmp_path,
-    monkeypatch,
-    mock_vectorstore,
-):
-    monkeypatch.chdir(
-        tmp_path
-    )
-
-    uploads = (
-        tmp_path
-        / "uploads"
-    )
-
-    uploads.mkdir()
-
-    old_file = (
-        uploads
-        / "legacy_document.txt"
-    )
-
-    old_file.write_text(
-        "legacy content",
-        encoding="utf-8",
-    )
-
-    mock_vectorstore.get.return_value = {
-        "ids": [
-            "chunk-old"
-        ],
-        "metadatas": [
-            {
-                # Old documents do not contain
-                # stored_name.
-                "source": (
-                    "legacy_document.txt"
-                )
-            }
-        ],
-    }
-
-    result = rag.delete_thread_documents(
-        "thread-old"
-    )
-
-    mock_vectorstore.delete.assert_called_once_with(
-        ids=[
-            "chunk-old"
-        ]
-    )
-
-    assert old_file.exists() is False
-
-    assert result == {
-        "deleted_chunks": 1,
-        "deleted_files": 1,
-    }
 
 
 
@@ -692,63 +933,14 @@ def test_get_embeddings_is_lazily_created_and_cached(
 
 
 
-# Test cache vectorstore
-
-def test_get_vectorstore_is_lazily_created_and_cached(
-    tmp_path,
-    monkeypatch,
-    mocker,
-):
-    rag.clear_rag_resource_cache()
-
-    monkeypatch.setattr(
-        rag.settings,
-        "chroma_dir",
-        tmp_path / "chroma",
-    )
-
-    mock_embeddings = mocker.Mock()
-
-    mocker.patch(
-        "rag.get_embeddings",
-        return_value=mock_embeddings,
-    )
-
-    mock_chroma_class = mocker.patch(
-        "rag.Chroma"
-    )
-
-    mock_store = mocker.Mock()
-
-    mock_chroma_class.return_value = (
-        mock_store
-    )
-
-    first = rag.get_vectorstore()
-    second = rag.get_vectorstore()
-
-    assert first is mock_store
-    assert second is mock_store
-
-    mock_chroma_class.assert_called_once_with(
-        collection_name="agentic_chatbot_docs",
-        embedding_function=mock_embeddings,
-        persist_directory=str(
-            tmp_path / "chroma"
-        ),
-    )
-
-    rag.clear_rag_resource_cache()
-
-
-
 
 # Test tylko wybrany dokument
 
 def test_delete_document_from_rag_deletes_only_selected_document(
     tmp_path,
     monkeypatch,
-    mock_vectorstore,
+    mock_pgvector_delete,
+    mocker,
 ):
     upload_dir = (
         tmp_path
@@ -783,70 +975,176 @@ def test_delete_document_from_rag_deletes_only_selected_document(
         encoding="utf-8",
     )
 
-    mock_vectorstore.get.return_value = {
-        "ids": [
-            "chunk-1",
-            "chunk-2",
-            "chunk-3",
-        ],
-        "metadatas": [
-            {
-                "thread_id": "thread-1",
-                "stored_name": (
-                    "uuid_selected.txt"
-                ),
-            },
-            {
-                "thread_id": "thread-1",
-                "stored_name": (
-                    "uuid_selected.txt"
-                ),
-            },
-            {
-                "thread_id": "thread-1",
-                "stored_name": (
-                    "uuid_other.txt"
-                ),
-            },
-        ],
-    }
+    document = rag.RagDocument(
+        id=10,
+        thread_id="thread-1",
+        source_name="selected.txt",
+        stored_name="uuid_selected.txt",
+    )
+
+    db = mock_pgvector_delete
+
+    document_query = mocker.Mock()
+    chunk_query = mocker.Mock()
+
+    db.query.side_effect = [
+        document_query,
+        chunk_query,
+    ]
+
+    (
+        document_query
+        .filter
+        .return_value
+        .first
+        .return_value
+    ) = document
+
+    (
+        chunk_query
+        .filter
+        .return_value
+        .count
+        .return_value
+    ) = 2
 
     result = (
         rag.delete_document_from_rag(
             thread_id="thread-1",
-            stored_name=(
-                "uuid_selected.txt"
-            ),
+            stored_name="uuid_selected.txt",
         )
     )
 
-    mock_vectorstore.get.assert_called_once_with(
-        where={
-            "thread_id": "thread-1"
-        },
-        include=[
-            "metadatas"
-        ],
+    assert selected_file.exists() is False
+    assert other_file.exists() is True
+
+    db.delete.assert_called_once_with(
+        document
     )
 
-    mock_vectorstore.delete.assert_called_once_with(
-        ids=[
-            "chunk-1",
-            "chunk-2",
-        ]
-    )
-
-    assert (
-        selected_file.exists()
-        is False
-    )
-
-    assert (
-        other_file.exists()
-        is True
-    )
+    db.commit.assert_called_once_with()
+    db.rollback.assert_not_called()
+    db.close.assert_called_once_with()
 
     assert result == {
         "deleted_chunks": 2,
         "deleted_files": 1,
     }
+
+
+
+
+def test_add_document_to_rag_rolls_back_when_database_write_fails(
+    tmp_path,
+    mock_pgvector_storage,
+):
+    file_path = (
+        tmp_path
+        / "rollback_test.txt"
+    )
+
+    file_path.write_text(
+        "Document content for rollback test.",
+        encoding="utf-8",
+    )
+
+    embeddings, db = (
+        mock_pgvector_storage
+    )
+
+    db.add_all.side_effect = RuntimeError(
+        "Database write failed"
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Database write failed",
+    ):
+        rag.add_document_to_rag(
+            file_path=str(file_path),
+            thread_id="thread-rollback",
+            original_filename="rollback.txt",
+        )
+
+    embeddings.embed_documents.assert_called_once()
+
+    db.add.assert_called_once()
+    db.flush.assert_called_once()
+    db.add_all.assert_called_once()
+
+    db.commit.assert_not_called()
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
+
+
+
+
+# Test rollbacku
+
+def test_delete_document_from_rag_rolls_back_when_database_delete_fails(
+    tmp_path,
+    monkeypatch,
+    mock_pgvector_delete,
+    mocker,
+):
+    upload_dir = (
+        tmp_path
+        / "uploads"
+    )
+
+    upload_dir.mkdir()
+
+    monkeypatch.setattr(
+        rag.settings,
+        "upload_dir",
+        upload_dir,
+    )
+
+    document = rag.RagDocument(
+        id=1,
+        thread_id="thread-fail",
+        source_name="document.txt",
+        stored_name="stored.txt",
+    )
+
+    db = mock_pgvector_delete
+
+    document_query = mocker.Mock()
+    chunk_query = mocker.Mock()
+
+    db.query.side_effect = [
+        document_query,
+        chunk_query,
+    ]
+
+    (
+        document_query
+        .filter
+        .return_value
+        .first
+        .return_value
+    ) = document
+
+    (
+        chunk_query
+        .filter
+        .return_value
+        .count
+        .return_value
+    ) = 1
+
+    db.commit.side_effect = RuntimeError(
+        "Database delete failed"
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="Database delete failed",
+    ):
+        rag.delete_document_from_rag(
+            thread_id="thread-fail",
+            stored_name="stored.txt",
+        )
+
+    db.rollback.assert_called_once_with()
+    db.close.assert_called_once_with()
