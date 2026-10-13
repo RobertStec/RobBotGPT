@@ -73,6 +73,18 @@ class Settings(BaseSettings):
 
     alpha_vantage_api_key: SecretStr | None = None
 
+    langsmith_api_key: SecretStr | None = None
+
+    langsmith_endpoint: str = (
+        "https://eu.api.smith.langchain.com"
+    )
+
+    langsmith_project: str = (
+        "RobBotGPT"
+    )
+
+    langsmith_workspace_id: str | None = None
+
 
     # =====================================================
     # Storage
@@ -104,6 +116,30 @@ class Settings(BaseSettings):
         default=4,
         ge=1,
         le=50,
+    )
+
+    rag_retrieval_top_k: int = Field(
+        default=12,
+        ge=1,
+        le=50,
+    )
+
+    rag_final_top_k: int = Field(
+        default=4,
+        ge=1,
+        le=50,
+    )
+
+    rag_relevance_threshold: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+    )
+
+    rag_context_max_chars: int = Field(
+        default=6000,
+        ge=500,
+        le=50_000,
     )
 
     # =====================================================
@@ -179,6 +215,16 @@ class Settings(BaseSettings):
                 "RAG_CHUNK_OVERLAP must be "
                 "smaller than RAG_CHUNK_SIZE."
             )
+
+        if (
+            self.rag_final_top_k
+            > self.rag_retrieval_top_k
+        ):
+            raise ValueError(
+                "RAG_FINAL_TOP_K cannot be greater "
+                "than RAG_RETRIEVAL_TOP_K."
+            )
+
 
         if (
             self.app_env == "production"

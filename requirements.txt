@@ -3,19 +3,20 @@ uvicorn
 jinja2
 python-multipart
 python-dotenv
+requests
+certifi
 
-langchain
 langchain-openai
 langchain-core
 langgraph
 langchain-text-splitters
 langgraph-checkpoint-postgres
 langsmith
+langchain-tavily
 
 pypdf
 docx2txt
-langchain-tavily
-tavily-python
+
 sqlalchemy
 psycopg[binary]
 pgvector

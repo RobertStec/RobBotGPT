@@ -12,6 +12,10 @@ from nodes import (
     chatbot_node,
     router_node,
     route_after_router,
+    rewrite_query_node,
+    rerank_node,
+    no_answer_node,
+    route_after_rerank,
     retrieve_node,
     generate_rag_node,
 )
@@ -96,6 +100,16 @@ def build_agent(model_name: str):
         system_prompt=SYSTEM_PROMPT
     )
 
+    rewrite_query = partial(
+        rewrite_query_node,
+        llm=llm,
+    )
+
+    rerank = partial(
+        rerank_node,
+        llm=llm,
+    )
+
     generate_rag = partial(
         generate_rag_node,
         llm=llm
@@ -112,8 +126,11 @@ def build_agent(model_name: str):
 
     workflow.add_node("router", router_node)
     workflow.add_node("chatbot", chatbot)
+    workflow.add_node("rewrite_query", rewrite_query)
     workflow.add_node("retrieve", retrieve_node)
+    workflow.add_node("rerank", rerank)
     workflow.add_node("generate", generate_rag)
+    workflow.add_node("no_answer", no_answer_node)
     workflow.add_node("tools", tool_node)
 
     # =========================
@@ -131,7 +148,7 @@ def build_agent(model_name: str):
         route_after_router,
         {
             "chatbot": "chatbot",
-            "document": "retrieve",
+            "document": "rewrite_query",
         }
     )
 
@@ -139,8 +156,20 @@ def build_agent(model_name: str):
     # RAG workflow
     # =========================
 
-    workflow.add_edge("retrieve", "generate")
+    workflow.add_edge("rewrite_query", "retrieve")
+    workflow.add_edge("retrieve", "rerank")
+
+    workflow.add_conditional_edges(
+        "rerank",
+        route_after_rerank,
+        {
+            "generate": "generate",
+            "no_answer": "no_answer",
+        },
+    )
+
     workflow.add_edge("generate", END)
+    workflow.add_edge("no_answer", END)
 
     # =========================
     # Normal agent workflow

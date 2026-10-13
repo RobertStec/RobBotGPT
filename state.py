@@ -31,10 +31,17 @@ class AgentState(TypedDict):
         Literal["chatbot", "document"]
     ]
 
+    # Query rewritten for semantic document retrieval.
+    rag_query: NotRequired[str]
+
     # Context retrieved from the vector database.
     rag_context: NotRequired[str]
 
     # Sources used by the RAG workflow.
     rag_sources: NotRequired[
         list[dict[str, Any]]
-]
+    ]
+
+    rag_candidates: NotRequired[
+        list[dict[str, Any]]
+    ]

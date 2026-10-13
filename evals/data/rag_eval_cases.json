@@ -1,0 +1,198 @@
+[
+  {
+    "id": "rag_fact_001",
+    "category": "factual",
+    "question": "Jaki jest termin zakończenia projektu Atlas?",
+    "expected_route": "generate",
+    "reference_answer": "Termin zakończenia projektu Atlas to 30 czerwca.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_fact_002",
+    "category": "factual",
+    "question": "Kto odpowiada za projekt Atlas?",
+    "expected_route": "generate",
+    "reference_answer": "Za projekt Atlas odpowiada Anna Kowalska.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_fact_003",
+    "category": "factual",
+    "question": "Jaki jest główny cel projektu Atlas?",
+    "expected_route": "generate",
+    "reference_answer": "Głównym celem projektu Atlas jest ujednolicenie danych oraz automatyzacja miesięcznego raportowania.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_fact_004",
+    "category": "factual",
+    "question": "Kiedy rozpocznie się pilotaż projektu Atlas?",
+    "expected_route": "generate",
+    "reference_answer": "Pilotaż projektu Atlas rozpocznie się 15 maja.",
+    "expected_source": "atlas.pdf"
+  },
+
+  {
+    "id": "rag_para_001",
+    "category": "factual",
+    "question": "Do kiedy ma potrwać Atlas?",
+    "expected_route": "generate",
+    "reference_answer": "Projekt Atlas ma zakończyć się 30 czerwca.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_para_002",
+    "category": "factual",
+    "question": "Kto kieruje Atlasem?",
+    "expected_route": "generate",
+    "reference_answer": "Projektem Atlas kieruje Anna Kowalska.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_para_003",
+    "category": "factual",
+    "question": "Jakie działy biorą udział w Atlasie?",
+    "expected_route": "generate",
+    "reference_answer": "W projekcie Atlas uczestniczą zespoły IT, Analityka oraz Operacje.",
+    "expected_source": "atlas.pdf"
+  },
+
+  {
+    "id": "rag_rewrite_001",
+    "category": "query_rewrite",
+    "history": [
+      {
+        "role": "user",
+        "content": "Opowiedz mi o projekcie Atlas."
+      },
+      {
+        "role": "assistant",
+        "content": "Projekt Atlas jest opisany w przesłanym dokumencie."
+      }
+    ],
+    "question": "A jaki był jego termin?",
+    "expected_route": "generate",
+    "reference_answer": "Termin zakończenia projektu Atlas to 30 czerwca.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_rewrite_002",
+    "category": "query_rewrite",
+    "history": [
+      {
+        "role": "user",
+        "content": "Kto odpowiada za projekt Atlas?"
+      },
+      {
+        "role": "assistant",
+        "content": "Za projekt odpowiada Anna Kowalska."
+      }
+    ],
+    "question": "A kto jest jego sponsorem?",
+    "expected_route": "generate",
+    "reference_answer": "Sponsorem biznesowym projektu Atlas jest Marek Nowak.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_rewrite_003",
+    "category": "query_rewrite",
+    "history": [
+      {
+        "role": "user",
+        "content": "Projekt Atlas ma etap pilotażowy?"
+      },
+      {
+        "role": "assistant",
+        "content": "Tak, dokument opisuje pilotaż rozwiązania."
+      }
+    ],
+    "question": "A kiedy się zaczyna?",
+    "expected_route": "generate",
+    "reference_answer": "Pilotaż projektu Atlas rozpocznie się 15 maja.",
+    "expected_source": "atlas.pdf"
+  },
+
+  {
+    "id": "rag_no_answer_001",
+    "category": "no_answer",
+    "question": "Jaki jest prywatny numer telefonu prezesa?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+  {
+    "id": "rag_no_answer_002",
+    "category": "no_answer",
+    "question": "Jakie auto służbowe otrzymał kierownik projektu Atlas?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+  {
+    "id": "rag_no_answer_003",
+    "category": "no_answer",
+    "question": "Jaki jest adres zamieszkania Anny Kowalskiej?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+
+  {
+    "id": "rag_hard_no_answer_001",
+    "category": "no_answer",
+    "question": "Jaki jest budżet projektu Atlas?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+  {
+    "id": "rag_hard_no_answer_002",
+    "category": "no_answer",
+    "question": "Kiedy rozpoczął się projekt Atlas?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+  {
+    "id": "rag_hard_no_answer_003",
+    "category": "no_answer",
+    "question": "Czy projekt Atlas jest opóźniony?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+
+  {
+    "id": "rag_distractor_001",
+    "category": "no_answer",
+    "question": "Jaki jest termin zakończenia projektu Orion?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+  {
+    "id": "rag_distractor_002",
+    "category": "no_answer",
+    "question": "Kto odpowiada za projekt Apollo?",
+    "expected_route": "no_answer",
+    "reference_answer": null,
+    "expected_source": null
+  },
+
+  {
+    "id": "rag_partial_001",
+    "category": "factual",
+    "question": "Kiedy rozpoczął się projekt Atlas i kiedy się zakończy?",
+    "expected_route": "generate",
+    "reference_answer": "Dokument nie podaje daty rozpoczęcia projektu Atlas, ale podaje termin zakończenia: 30 czerwca.",
+    "expected_source": "atlas.pdf"
+  },
+  {
+    "id": "rag_partial_002",
+    "category": "factual",
+    "question": "Ile osób pracuje w projekcie Atlas i jakie zespoły w nim uczestniczą?",
+    "expected_route": "generate",
+    "reference_answer": "Dokument nie podaje liczby osób pracujących przy projekcie Atlas. Wskazuje zespoły IT, Analityka oraz Operacje.",
+    "expected_source": "atlas.pdf"
+  }
+]

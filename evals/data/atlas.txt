@@ -1,0 +1,41 @@
+Projekt Atlas
+
+Projekt Atlas dotyczy modernizacji wewnętrznego procesu raportowania
+i analizy danych w firmie. Głównym celem projektu jest ujednolicenie
+danych pochodzących z różnych działów oraz automatyzacja miesięcznego
+raportowania.
+
+Za projekt Atlas odpowiada Anna Kowalska. Pełni ona rolę kierownika
+projektu i koordynuje prace zespołów uczestniczących w realizacji.
+Sponsorem biznesowym projektu jest Marek Nowak.
+
+W projekcie uczestniczą trzy główne zespoły: IT, Analityka oraz
+Operacje. Zespół IT odpowiada za integrację systemów i przygotowanie
+infrastruktury. Zespół Analityka przygotowuje modele raportowe,
+definicje wskaźników oraz dashboardy. Zespół Operacje odpowiada za
+weryfikację procesu biznesowego i testy rozwiązania.
+
+Jednym z rezultatów projektu ma być centralny dashboard raportowy.
+Projekt obejmuje również migrację danych z dotychczasowych źródeł,
+automatyzację procesu przygotowywania raportów oraz szkolenie
+użytkowników końcowych.
+
+Pilotaż rozwiązania rozpocznie się 15 maja. Podczas pilotażu wybrana
+grupa użytkowników będzie testowała nowe raporty i zgłaszała problemy
+zespołowi projektowemu.
+
+Termin zakończenia projektu Atlas to 30 czerwca. Do tego czasu mają
+zostać zakończone prace wdrożeniowe, migracja danych oraz podstawowe
+szkolenia użytkowników.
+
+Spotkania zespołu projektowego odbywają się raz w tygodniu, w środę.
+Podczas spotkań omawiany jest postęp prac, problemy techniczne oraz
+zadania na kolejny tydzień.
+
+W ramach rozwiązania wykorzystywane są Python i PostgreSQL.
+Dashboardy korzystają z danych przygotowanych przez procesy
+integracyjne realizowane przez zespół IT.
+
+Końcowym rezultatem projektu ma być działające środowisko raportowe,
+centralny dashboard, zmigrowane dane oraz dokumentacja przeznaczona
+dla użytkowników.

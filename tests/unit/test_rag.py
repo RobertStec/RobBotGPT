@@ -405,6 +405,243 @@ def test_add_pdf_preserves_page_numbers(
 
 
 
+# =========================================================
+# build_rag_context
+# =========================================================
+
+def test_build_rag_context_returns_empty_for_no_candidates():
+    result = rag.build_rag_context([])
+
+    assert result == {
+        "context": "",
+        "sources": [],
+    }
+
+
+
+
+def test_build_rag_context_preserves_candidate_order():
+    candidates = [
+        {
+            "chunk_id": 30,
+            "document_id": 1,
+            "content": "Most relevant chunk.",
+            "source": "manual.pdf",
+            "stored_name": "manual.pdf",
+            "page": 3,
+            "chunk_index": 3,
+            "distance": 0.30,
+            "rerank_score": 0.95,
+        },
+        {
+            "chunk_id": 10,
+            "document_id": 1,
+            "content": "Second relevant chunk.",
+            "source": "manual.pdf",
+            "stored_name": "manual.pdf",
+            "page": 1,
+            "chunk_index": 1,
+            "distance": 0.10,
+            "rerank_score": 0.80,
+        },
+    ]
+
+    result = rag.build_rag_context(
+        candidates
+    )
+
+    context = result["context"]
+
+    assert (
+        context.index(
+            "Most relevant chunk."
+        )
+        <
+        context.index(
+            "Second relevant chunk."
+        )
+    )
+
+
+
+def test_build_rag_context_skips_duplicate_chunks():
+    candidate = {
+        "chunk_id": 1,
+        "document_id": 10,
+        "content": "Unique content.",
+        "source": "manual.pdf",
+        "stored_name": "manual.pdf",
+        "page": 2,
+        "chunk_index": 1,
+        "distance": 0.10,
+        "rerank_score": 0.90,
+    }
+
+    result = rag.build_rag_context(
+        [
+            candidate,
+            dict(candidate),
+        ]
+    )
+
+    assert (
+        result["context"].count(
+            "Unique content."
+        )
+        == 1
+    )
+
+    assert len(
+        result["sources"]
+    ) == 1
+
+
+
+def test_build_rag_context_skips_empty_chunks():
+    candidates = [
+        {
+            "chunk_id": 1,
+            "document_id": 10,
+            "content": "   ",
+            "source": "empty.pdf",
+            "page": 1,
+            "chunk_index": 1,
+        },
+        {
+            "chunk_id": 2,
+            "document_id": 10,
+            "content": "Useful content.",
+            "source": "manual.pdf",
+            "page": 2,
+            "chunk_index": 2,
+        },
+        {
+            "chunk_id": 3,
+            "document_id": 10,
+            "content": None,
+            "source": "invalid.pdf",
+            "page": 3,
+            "chunk_index": 3,
+        },
+    ]
+
+    result = rag.build_rag_context(
+        candidates
+    )
+
+    assert (
+        "Useful content."
+        in result["context"]
+    )
+
+    assert (
+        "empty.pdf"
+        not in result["context"]
+    )
+
+    assert (
+        "invalid.pdf"
+        not in result["context"]
+    )
+
+    assert result["sources"] == [
+        {
+            "source": "manual.pdf",
+            "page": 2,
+            "chunk_index": 2,
+        }
+    ]
+
+
+def test_build_rag_context_uses_chunk_number_when_page_missing():
+    candidates = [
+        {
+            "chunk_id": 1,
+            "document_id": 10,
+            "content": "TXT document content.",
+            "source": "notes.txt",
+            "page": None,
+            "chunk_index": 5,
+        }
+    ]
+
+    result = rag.build_rag_context(
+        candidates
+    )
+
+    assert (
+        "[Source: notes.txt, chunk: 5]"
+        in result["context"]
+    )
+
+
+def test_build_rag_context_respects_max_chars():
+    candidates = [
+        {
+            "chunk_id": 1,
+            "document_id": 10,
+            "content": "A" * 200,
+            "source": "first.pdf",
+            "page": 1,
+            "chunk_index": 1,
+        },
+        {
+            "chunk_id": 2,
+            "document_id": 20,
+            "content": "B" * 200,
+            "source": "second.pdf",
+            "page": 2,
+            "chunk_index": 1,
+        },
+    ]
+
+    result = rag.build_rag_context(
+        candidates=candidates,
+        max_chars=150,
+    )
+
+    assert len(
+        result["context"]
+    ) <= 150
+
+    assert (
+        "first.pdf"
+        in result["context"]
+    )
+
+    assert len(
+        result["sources"]
+    ) == 1
+
+    assert (
+        result["sources"][0]["source"]
+        == "first.pdf"
+    )
+
+
+
+
+
+
+def test_build_rag_context_rejects_invalid_max_chars():
+    with pytest.raises(
+        ValueError,
+        match=(
+            "max_chars must be greater than 0"
+        ),
+    ):
+        rag.build_rag_context(
+            candidates=[
+                {
+                    "chunk_id": 1,
+                    "content": "Content",
+                }
+            ],
+            max_chars=0,
+        )
+
+
+
 
 # Test Retrieval - poprawny filtr thread_id
 
@@ -448,6 +685,7 @@ def test_retrieve_from_rag_filters_by_thread_id(
         (
             chunk,
             document,
+            0.18,
         )
     ]
 
@@ -461,10 +699,13 @@ def test_retrieve_from_rag_filters_by_thread_id(
         "What does LangGraph do?"
     )
 
-    db.query.assert_called_once_with(
-        rag.RagChunk,
-        rag.RagDocument,
+    query_args = (
+        db.query.call_args.args
     )
+
+    assert query_args[0] is rag.RagChunk
+    assert query_args[1] is rag.RagDocument
+    assert len(query_args) == 3
 
     query.limit.assert_called_once_with(
         4
@@ -569,8 +810,16 @@ def test_retrieve_from_rag_deduplicates_sources(
     query.limit.return_value = query
 
     query.all.return_value = [
-        (chunk_1, document),
-        (chunk_2, document),
+        (
+            chunk_1,
+            document,
+            0.12,
+        ),
+        (
+            chunk_2,
+            document,
+            0.24,
+        ),
     ]
 
     result = rag.retrieve_from_rag(
@@ -594,6 +843,261 @@ def test_retrieve_from_rag_deduplicates_sources(
 
     assert "First chunk" in result["context"]
     assert "Second chunk" in result["context"]
+
+
+
+
+# =========================================================
+# Advanced RAG - retrieval candidates
+# =========================================================
+
+
+def test_retrieve_candidates_from_rag_returns_distance_and_metadata(
+    mock_pgvector_retrieval,
+):
+    embeddings, db = (
+        mock_pgvector_retrieval
+    )
+
+    document = rag.RagDocument(
+        id=10,
+        thread_id="thread-123",
+        source_name="project.pdf",
+        stored_name="stored_project.pdf",
+    )
+
+    chunk = rag.RagChunk(
+        id=20,
+        document_id=10,
+        page=2,
+        chunk_index=3,
+        content=(
+            "LangGraph manages agent workflows."
+        ),
+        embedding=[
+            0.1,
+            0.2,
+            0.3,
+        ],
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = [
+        (
+            chunk,
+            document,
+            0.18,
+        )
+    ]
+
+    result = (
+        rag.retrieve_candidates_from_rag(
+            query="What does LangGraph do?",
+            thread_id="thread-123",
+            k=4,
+        )
+    )
+
+    assert result == [
+        {
+            "chunk_id": 20,
+            "document_id": 10,
+            "content": (
+                "LangGraph manages agent workflows."
+            ),
+            "source": "project.pdf",
+            "stored_name": (
+                "stored_project.pdf"
+            ),
+            "page": 2,
+            "chunk_index": 3,
+            "distance": 0.18,
+        }
+    ]
+
+    embeddings.embed_query.assert_called_once_with(
+        "What does LangGraph do?"
+    )
+
+    query.limit.assert_called_once_with(
+        4
+    )
+
+    db.close.assert_called_once_with()
+
+
+
+
+
+# Test sprawdza czy zachowujemy kolejność zwróconą przez pgvector
+
+def test_retrieve_candidates_from_rag_preserves_distance_order(
+    mock_pgvector_retrieval,
+):
+    _, db = (
+        mock_pgvector_retrieval
+    )
+
+    document = rag.RagDocument(
+        id=1,
+        thread_id="thread-order",
+        source_name="manual.pdf",
+        stored_name="stored_manual.pdf",
+    )
+
+    best_chunk = rag.RagChunk(
+        id=101,
+        document_id=1,
+        page=1,
+        chunk_index=1,
+        content="Best matching chunk",
+        embedding=[
+            0.1,
+            0.2,
+            0.3,
+        ],
+    )
+
+    weaker_chunk = rag.RagChunk(
+        id=102,
+        document_id=1,
+        page=2,
+        chunk_index=2,
+        content="Weaker matching chunk",
+        embedding=[
+            0.3,
+            0.2,
+            0.1,
+        ],
+    )
+
+    query = db.query.return_value
+
+    query.join.return_value = query
+    query.filter.return_value = query
+    query.order_by.return_value = query
+    query.limit.return_value = query
+
+    query.all.return_value = [
+        (
+            best_chunk,
+            document,
+            0.11,
+        ),
+        (
+            weaker_chunk,
+            document,
+            0.34,
+        ),
+    ]
+
+    result = (
+        rag.retrieve_candidates_from_rag(
+            query="agent workflow",
+            thread_id="thread-order",
+            k=8,
+        )
+    )
+
+    assert [
+        candidate["chunk_id"]
+        for candidate in result
+    ] == [
+        101,
+        102,
+    ]
+
+    assert [
+        candidate["distance"]
+        for candidate in result
+    ] == [
+        0.11,
+        0.34,
+    ]
+
+    query.order_by.assert_called_once()
+
+    query.limit.assert_called_once_with(
+        8
+    )
+
+
+
+
+
+# Test funkcji build_rag_context
+
+def test_build_rag_context_builds_context_and_deduplicates_sources():
+    candidates = [
+        {
+            "chunk_id": 1,
+            "document_id": 10,
+            "content": "First chunk",
+            "source": "manual.pdf",
+            "stored_name": "stored.pdf",
+            "page": 5,
+            "chunk_index": 1,
+            "distance": 0.10,
+        },
+        {
+            "chunk_id": 2,
+            "document_id": 10,
+            "content": "Second chunk",
+            "source": "manual.pdf",
+            "stored_name": "stored.pdf",
+            "page": 5,
+            "chunk_index": 2,
+            "distance": 0.20,
+        },
+        {
+            "chunk_id": 3,
+            "document_id": 11,
+            "content": "TXT chunk",
+            "source": "notes.txt",
+            "stored_name": "notes.txt",
+            "page": None,
+            "chunk_index": 1,
+            "distance": 0.30,
+        },
+    ]
+
+    result = rag.build_rag_context(
+        candidates
+    )
+
+    assert (
+        "[Source: manual.pdf, page: 5]\n"
+        "First chunk"
+        in result["context"]
+    )
+
+    assert "Second chunk" in result["context"]
+
+    assert (
+        "[Source: notes.txt, chunk: 1]\n"
+        "TXT chunk"
+        in result["context"]
+    )
+
+    assert result["sources"] == [
+        {
+            "source": "manual.pdf",
+            "page": 5,
+            "chunk_index": 1,
+        },
+        {
+            "source": "notes.txt",
+            "page": None,
+            "chunk_index": 1,
+        },
+    ]
+
 
 
 
@@ -875,6 +1379,7 @@ def test_retrieve_from_rag_handles_source_without_page(
         (
             chunk,
             document,
+            0.20,
         )
     ]
 
@@ -885,7 +1390,7 @@ def test_retrieve_from_rag_handles_source_without_page(
     )
 
     assert (
-        "[Source: notes.txt]\n"
+        "[Source: notes.txt, chunk: 3]\n"
         "Content from TXT document."
         in result["context"]
     )

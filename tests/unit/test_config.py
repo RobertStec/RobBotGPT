@@ -21,6 +21,7 @@ def test_settings_default_values(
         "DATABASE_URL",
         "RAG_CHUNK_SIZE",
         "RAG_CHUNK_OVERLAP",
+        "RAG_CONTEXT_MAX_CHARS",
         "RAG_TOP_K",
         "APP_HOST",
         "APP_PORT",
@@ -70,6 +71,11 @@ def test_settings_default_values(
         == Path("uploads")
     )
 
+    assert (
+        settings.rag_context_max_chars
+        == 6000
+    )
+
 
     assert settings.rag_chunk_size == 900
     assert settings.rag_chunk_overlap == 150
@@ -110,6 +116,11 @@ def test_settings_reads_environment_variables(
         "9000",
     )
 
+    monkeypatch.setenv(
+        "RAG_CONTEXT_MAX_CHARS",
+        "8000",
+    )
+
     settings = Settings(
         _env_file=None
     )
@@ -120,12 +131,22 @@ def test_settings_reads_environment_variables(
     )
 
     assert settings.rag_top_k == 8
+
     assert settings.app_port == 9000
+
+    assert (
+        settings.rag_context_max_chars
+        == 8000
+    )
+
+
+
 
 
 def test_allowed_models_contains_supported_models():
     assert "gpt-4o-mini" in ALLOWED_MODELS
     assert "gpt-4.1-mini" in ALLOWED_MODELS
+
 
 
 

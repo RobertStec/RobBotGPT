@@ -232,11 +232,17 @@ def add_document_to_rag(
 
 
 
-def retrieve_from_rag(
+def retrieve_candidates_from_rag(
     query: str,
     thread_id: str,
     k: int = 4,
-) -> dict:
+) -> list[dict]:
+    """
+    Retrieve raw RAG candidates ordered by
+    pgvector cosine distance.
+
+    Lower distance means higher semantic similarity.
+    """
 
     query_embedding = (
         get_embeddings()
@@ -246,10 +252,19 @@ def retrieve_from_rag(
     db = create_session()
 
     try:
+        distance = (
+            RagChunk.embedding
+            .cosine_distance(
+                query_embedding
+            )
+            .label("distance")
+        )
+
         rows = (
             db.query(
                 RagChunk,
                 RagDocument,
+                distance,
             )
             .join(
                 RagDocument,
@@ -261,82 +276,291 @@ def retrieve_from_rag(
                 == thread_id
             )
             .order_by(
-                RagChunk.embedding.cosine_distance(
-                    query_embedding
-                )
+                distance
             )
             .limit(k)
             .all()
         )
 
-        if not rows:
-            return {
-                "context": "",
-                "sources": [],
+        return [
+            {
+                "chunk_id": chunk.id,
+                "document_id": document.id,
+                "content": chunk.content,
+                "source": (
+                    document.source_name
+                    or "uploaded document"
+                ),
+                "stored_name": (
+                    document.stored_name
+                ),
+                "page": chunk.page,
+                "chunk_index": (
+                    chunk.chunk_index
+                ),
+                "distance": float(
+                    distance_value
+                ),
             }
-
-        context_parts = []
-        sources = []
-
-        for chunk, document in rows:
-
-            source = (
-                document.source_name
-                or "uploaded document"
-            )
-
-            page = chunk.page
-            chunk_index = (
-                chunk.chunk_index
-            )
-
-            if page is not None:
-                context_parts.append(
-                    f"[Source: {source}, "
-                    f"page: {page}]\n"
-                    f"{chunk.content}"
-                )
-            else:
-                context_parts.append(
-                    f"[Source: {source}]\n"
-                    f"{chunk.content}"
-                )
-
-            sources.append({
-                "source": source,
-                "page": page,
-                "chunk_index": chunk_index,
-            })
-
-        unique_sources = []
-        seen = set()
-
-        for source in sources:
-
-            key = (
-                source["source"],
-                source["page"]
-                if source["page"] is not None
-                else source["chunk_index"],
-            )
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-            unique_sources.append(
-                source
-            )
-
-        return {
-            "context": "\n\n".join(
-                context_parts
-            ),
-            "sources": unique_sources,
-        }
+            for (
+                chunk,
+                document,
+                distance_value,
+            ) in rows
+        ]
 
     finally:
         db.close()
+
+
+
+
+
+def build_rag_context(
+    candidates: list[dict],
+    max_chars: int | None = None,
+) -> dict:
+    """
+    Build the final RAG context from ranked candidates.
+
+    The candidate order is preserved because it reflects
+    the relevance order produced by the reranker.
+
+    Duplicate and empty chunks are skipped.
+
+    When max_chars is provided, the final context is
+    limited to that number of characters.
+    """
+
+    if not candidates:
+        return {
+            "context": "",
+            "sources": [],
+        }
+
+    if (
+        max_chars is not None
+        and max_chars < 1
+    ):
+        raise ValueError(
+            "max_chars must be greater than 0."
+        )
+
+    context_parts = []
+    sources = []
+
+    seen_chunks = set()
+
+    current_length = 0
+
+    for candidate in candidates:
+
+        content = candidate.get(
+            "content"
+        )
+
+        if not isinstance(
+            content,
+            str,
+        ):
+            continue
+
+        content = content.strip()
+
+        if not content:
+            continue
+
+        chunk_id = candidate.get(
+            "chunk_id"
+        )
+
+        if chunk_id is not None:
+            dedupe_key = (
+                "chunk_id",
+                chunk_id,
+            )
+        else:
+            dedupe_key = (
+                candidate.get(
+                    "document_id"
+                ),
+                candidate.get(
+                    "chunk_index"
+                ),
+                content,
+            )
+
+        if dedupe_key in seen_chunks:
+            continue
+
+        seen_chunks.add(
+            dedupe_key
+        )
+
+        source = (
+            candidate.get("source")
+            or "uploaded document"
+        )
+
+        page = candidate.get(
+            "page"
+        )
+
+        chunk_index = candidate.get(
+            "chunk_index"
+        )
+
+
+        if page is not None:
+            header = (
+                f"[Source: {source}, "
+                f"page: {page}]"
+            )
+
+        elif chunk_index is not None:
+            header = (
+                f"[Source: {source}, "
+                f"chunk: {chunk_index}]"
+            )
+
+        else:
+            header = (
+                f"[Source: {source}]"
+            )
+
+        block = (
+            f"{header}\n"
+            f"{content}"
+        )
+
+        separator = (
+            "\n\n"
+            if context_parts
+            else ""
+        )
+
+        if max_chars is not None:
+
+            available = (
+                max_chars
+                - current_length
+                - len(separator)
+            )
+
+            if available <= 0:
+                break
+
+            if len(block) > available:
+
+                header_with_newline = (
+                    f"{header}\n"
+                )
+
+                content_budget = (
+                    available
+                    - len(
+                        header_with_newline
+                    )
+                )
+
+                if content_budget <= 0:
+                    break
+
+                block = (
+                    header_with_newline
+                    + content[
+                        :content_budget
+                    ]
+                )
+
+                context_parts.append(
+                    block
+                )
+
+                sources.append({
+                    "source": source,
+                    "page": page,
+                    "chunk_index": (
+                        chunk_index
+                    ),
+                })
+
+                break
+
+        context_parts.append(
+            block
+        )
+
+        sources.append({
+            "source": source,
+            "page": page,
+            "chunk_index": (
+                chunk_index
+            ),
+        })
+
+        current_length += (
+            len(separator)
+            + len(block)
+        )
+
+    unique_sources = []
+    seen_sources = set()
+
+    for source in sources:
+
+        source_key = (
+            source["source"],
+            (
+                source["page"]
+                if source["page"] is not None
+                else source["chunk_index"]
+            ),
+        )
+
+        if source_key in seen_sources:
+            continue
+
+        seen_sources.add(
+            source_key
+        )
+
+        unique_sources.append(
+            source
+        )
+
+    return {
+        "context": "\n\n".join(
+            context_parts
+        ),
+        "sources": unique_sources,
+    }
+
+
+
+
+
+def retrieve_from_rag(
+    query: str,
+    thread_id: str,
+    k: int = 4,
+) -> dict:
+    """
+    Retrieve RAG candidates and build the final
+    context used by the existing application.
+    """
+
+    candidates = (
+        retrieve_candidates_from_rag(
+            query=query,
+            thread_id=thread_id,
+            k=k,
+        )
+    )
+
+    return build_rag_context(
+        candidates
+    )
 
 
 

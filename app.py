@@ -5,7 +5,12 @@ configure_environment()
 from pathlib import Path
 import uvicorn
 
-from fastapi import FastAPI, Request
+from fastapi import (
+    FastAPI,
+    Request,
+    HTTPException,
+)
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -20,6 +25,12 @@ from core.exceptions import (
     AppError,
     app_error_handler,
 )
+
+from sqlalchemy import text
+
+from database import get_engine
+
+
 
 
 
@@ -67,6 +78,40 @@ templates = Jinja2Templates(
 
 
 
+
+@app.get("/health")
+async def health():
+    """
+    Application healthcheck.
+
+    Verifies that the FastAPI application
+    can communicate with the database.
+    """
+
+    try:
+        engine = get_engine()
+
+        with engine.connect() as connection:
+            connection.execute(
+                text("SELECT 1")
+            )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "status": "unhealthy",
+                "database": "unavailable",
+            },
+        ) from exc
+    return {
+        "status": "healthy",
+        "database": "connected",
+    }
+
+
+
+
 @app.get("/")
 async def home(request: Request):
     return templates.TemplateResponse(
@@ -78,7 +123,7 @@ async def home(request: Request):
 
 
 if __name__ == "__main__":
-   
+
     uvicorn.run(
         "app:app",
         host=settings.app_host,

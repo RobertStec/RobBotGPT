@@ -181,8 +181,11 @@ def test_build_agent_creates_expected_langgraph(
     assert node_names == [
         "router",
         "chatbot",
+        "rewrite_query",
         "retrieve",
+        "rerank",
         "generate",
+        "no_answer",
         "tools",
     ]
 
@@ -194,6 +197,11 @@ def test_build_agent_creates_expected_langgraph(
     mock_workflow.add_node.assert_any_call(
         "tools",
         mock_tool_node,
+    )
+
+    mock_workflow.add_node.assert_any_call(
+        "no_answer",
+        agent.no_answer_node,
     )
 
     # -----------------------------------------
@@ -233,13 +241,73 @@ def test_build_agent_creates_expected_langgraph(
     )
 
     # -----------------------------------------
+    # Check query rewrite partial
+    # -----------------------------------------
+
+    rewrite_call = (
+        mock_workflow
+        .add_node
+        .call_args_list[2]
+    )
+
+    rewrite_partial = (
+        rewrite_call.args[1]
+    )
+
+    assert isinstance(
+        rewrite_partial,
+        partial,
+    )
+
+    assert (
+        rewrite_partial.func
+        is agent.rewrite_query_node
+    )
+
+    assert (
+        rewrite_partial.keywords["llm"]
+        is mock_llm
+    )
+
+
+    # -----------------------------------------
+    # Check RAG rerank partial
+    # -----------------------------------------
+
+    rerank_call = (
+        mock_workflow
+        .add_node
+        .call_args_list[4]
+    )
+
+    rerank_partial = rerank_call.args[1]
+
+    assert isinstance(
+        rerank_partial,
+        partial,
+    )
+
+    assert (
+        rerank_partial.func
+        is agent.rerank_node
+    )
+
+    assert (
+        rerank_partial.keywords["llm"]
+        is mock_llm
+    )
+
+
+
+
+    # -----------------------------------------
     # Check RAG generation partial
     # -----------------------------------------
 
     generate_call = (
         mock_workflow
         .add_node
-        .call_args_list[3]
+        .call_args_list[5]
     )
 
     generate_partial = generate_call.args[1]
@@ -269,12 +337,22 @@ def test_build_agent_creates_expected_langgraph(
     )
 
     mock_workflow.add_edge.assert_any_call(
+        "rewrite_query",
         "retrieve",
-        "generate",
+    )
+
+    mock_workflow.add_edge.assert_any_call(
+        "retrieve",
+        "rerank",
     )
 
     mock_workflow.add_edge.assert_any_call(
         "generate",
+        agent.END,
+    )
+
+    mock_workflow.add_edge.assert_any_call(
+        "no_answer",
         agent.END,
     )
 
@@ -292,7 +370,16 @@ def test_build_agent_creates_expected_langgraph(
         agent.route_after_router,
         {
             "chatbot": "chatbot",
-            "document": "retrieve",
+            "document": "rewrite_query",
+        },
+    )
+
+    mock_workflow.add_conditional_edges.assert_any_call(
+        "rerank",
+        agent.route_after_rerank,
+        {
+            "generate": "generate",
+            "no_answer": "no_answer",
         },
     )
 
@@ -300,6 +387,7 @@ def test_build_agent_creates_expected_langgraph(
         "chatbot",
         agent.tools_condition,
     )
+
 
     # -----------------------------------------
     # Checkpointer
