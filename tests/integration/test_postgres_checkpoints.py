@@ -1,5 +1,7 @@
+import os
 import uuid
 
+import pytest
 import checkpoints
 
 from langchain_core.messages import (
@@ -22,6 +24,10 @@ from langgraph.types import Command
 
 from state import AgentState
 from tools import purchase_stock
+
+
+
+
 
 
 def hitl_chatbot_node(
@@ -74,6 +80,35 @@ def hitl_chatbot_node(
     }
 
 
+
+@pytest.fixture
+def postgres_checkpoint_database(
+    monkeypatch,
+):
+    database_url = os.getenv(
+        "TEST_DATABASE_URL"
+    )
+
+    if not database_url:
+        pytest.skip(
+            "TEST_DATABASE_URL is not configured."
+        )
+
+    checkpoints.clear_checkpoint_resource_cache()
+
+    monkeypatch.setattr(
+        checkpoints.settings,
+        "database_url",
+        database_url,
+    )
+
+    yield database_url
+
+    checkpoints.clear_checkpoint_resource_cache()
+
+
+
+
 def build_hitl_graph(
     checkpointer,
 ):
@@ -115,7 +150,9 @@ def build_hitl_graph(
 
 
 
-def test_postgres_checkpoint_survives_resource_restart():
+def test_postgres_checkpoint_survives_resource_restart(
+    postgres_checkpoint_database,
+):
     thread_id = (
         "postgres-hitl-"
         f"{uuid.uuid4()}"
@@ -224,7 +261,9 @@ def test_postgres_checkpoint_survives_resource_restart():
 
 
 
-def test_postgres_checkpoint_rows_are_deleted_with_thread():
+def test_postgres_checkpoint_rows_are_deleted_with_thread(
+    postgres_checkpoint_database,
+):
     thread_id = (
         "postgres-delete-"
         f"{uuid.uuid4()}"

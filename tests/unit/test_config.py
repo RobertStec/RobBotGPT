@@ -184,7 +184,11 @@ def test_settings_supports_production_environment(
     )
 
     settings = Settings(
-        _env_file=None
+        _env_file=None,
+        database_url=(
+            "postgresql+psycopg://"
+            "user:password@localhost:5432/test_db"
+        ),
     )
 
     assert (
