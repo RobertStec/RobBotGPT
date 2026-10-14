@@ -150,3 +150,33 @@ jobs:
             tests/integration/test_postgres_api.py \
             tests/integration/test_postgres_checkpoints.py \
             -v
+
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build production Docker image
+        run: docker build -t robbotgpt:ci .
+
+      - name: Verify Docker image
+        run: docker image inspect robbotgpt:ci > /dev/null
+
+      - name: Verify Python runtime
+        run: |
+          docker run --rm \
+            --entrypoint python \
+            robbotgpt:ci \
+            --version
+
+      - name: Verify non-root user
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            robbotgpt:ci \
+            -c 'test "$(whoami)" = "robbotgpt"'
