@@ -55,8 +55,21 @@ jobs:
       - name: Create runtime directories
         run: mkdir -p data uploads
 
-      - name: Run tests
-        run: python -m pytest -q
+      - name: Run tests with coverage gate
+        run: |
+          python -m pytest \
+            --cov=app \
+            --cov=agent \
+            --cov=nodes \
+            --cov=rag \
+            --cov=reranker \
+            --cov=database \
+            --cov=checkpoints \
+            --cov=tools \
+            --cov=core \
+            --cov-report=term-missing \
+            --cov-report=xml \
+            -q
 
   postgres-tests:
     name: PostgreSQL integration tests
