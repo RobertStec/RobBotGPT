@@ -49,27 +49,24 @@ jobs:
           username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build Docker image
+      - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
-          push: false
-          load: true
+          push: true
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:latest
             ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Verify Docker image tags
+      - name: Verify published Docker image tags
         run: |
-          docker image inspect \
-            "${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:latest" \
-            > /dev/null
+          docker buildx imagetools inspect \
+            "${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:latest"
 
-          docker image inspect \
-            "${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${{ github.sha }}" \
-            > /dev/null
+          docker buildx imagetools inspect \
+            "${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${{ github.sha }}"
 
-          echo "Docker image tags verified successfully."
+          echo "Published Docker image tags verified successfully."
