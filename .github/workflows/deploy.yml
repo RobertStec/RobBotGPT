@@ -13,9 +13,12 @@ concurrency:
 
 jobs:
   deploy:
-    name: Verify AWS deployment channel
+    name: Deploy RobBotGPT to AWS
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    env:
+      IMAGE_URI: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${{ github.sha }}
 
     steps:
       - name: Configure AWS credentials via OIDC
@@ -28,27 +31,36 @@ jobs:
       - name: Verify assumed AWS identity
         run: aws sts get-caller-identity
 
-      - name: Run SSM deployment smoke test
-        id: ssm
+      - name: Deploy image through AWS Systems Manager
+        id: deploy
         shell: bash
         run: |
           set -euo pipefail
 
           PARAMETERS=$(jq -n \
             --arg deploy_path "${{ vars.AWS_DEPLOY_PATH }}" \
+            --arg image_uri "$IMAGE_URI" \
             '{
               commands: [
                 "set -eu",
                 ("cd " + $deploy_path),
-                "echo OIDC_and_SSM_OK",
-                "docker compose --env-file .env.production -f docker-compose.prod.yml ps"
+                ("export ROBBOTGPT_IMAGE=" + $image_uri),
+                "echo Deploying $ROBBOTGPT_IMAGE",
+                "docker pull \"$ROBBOTGPT_IMAGE\"",
+                "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-deps app",
+                "DEPLOYED_IMAGE=$(docker inspect robbotgpt-app --format '\''{{.Config.Image}}'\'')",
+                "echo Deployed image: $DEPLOYED_IMAGE",
+                "test \"$DEPLOYED_IMAGE\" = \"$ROBBOTGPT_IMAGE\"",
+                "for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi; sleep 2; done",
+                "docker logs robbotgpt-app --tail=100",
+                "exit 1"
               ]
             }')
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ vars.AWS_EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --comment "RobBotGPT deployment smoke test" \
+            --comment "Deploy RobBotGPT $IMAGE_URI" \
             --parameters "$PARAMETERS" \
             --query "Command.CommandId" \
             --output text)
@@ -56,16 +68,27 @@ jobs:
           echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
           echo "SSM command ID: $COMMAND_ID"
 
-      - name: Wait for SSM command
+      - name: Wait for deployment
         run: |
           aws ssm wait command-executed \
-            --command-id "${{ steps.ssm.outputs.command_id }}" \
+            --command-id "${{ steps.deploy.outputs.command_id }}" \
             --instance-id "${{ vars.AWS_EC2_INSTANCE_ID }}"
 
-      - name: Show SSM command result
+      - name: Show deployment result
         run: |
           aws ssm get-command-invocation \
-            --command-id "${{ steps.ssm.outputs.command_id }}" \
+            --command-id "${{ steps.deploy.outputs.command_id }}" \
             --instance-id "${{ vars.AWS_EC2_INSTANCE_ID }}" \
             --query '{Status:Status,ResponseCode:ResponseCode,Output:StandardOutputContent,Error:StandardErrorContent}' \
             --output yaml
+
+      - name: Verify public production health
+        run: |
+          curl --fail --silent --show-error \
+            "${{ vars.PRODUCTION_URL }}/health"
+
+      - name: Deployment summary
+        run: |
+          echo "Deployment successful"
+          echo "Image: $IMAGE_URI"
+          echo "Production: ${{ vars.PRODUCTION_URL }}"
