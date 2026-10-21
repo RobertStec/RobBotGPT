@@ -1,7 +1,20 @@
 name: Deploy to AWS
 
 on:
+  workflow_run:
+    workflows:
+      - Docker Publish
+    types:
+      - completed
+    branches:
+      - main
+
   workflow_dispatch:
+    inputs:
+      image_sha:
+        description: "Optional full 40-character commit SHA to deploy or rollback to"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -14,13 +27,42 @@ concurrency:
 jobs:
   deploy:
     name: Deploy RobBotGPT to AWS
+
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
-    env:
-      IMAGE_URI: ${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${{ github.sha }}
-
     steps:
+      - name: Resolve deployment SHA
+        id: image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            DEPLOY_SHA="${{ github.event.workflow_run.head_sha }}"
+          elif [[ -n "${{ inputs.image_sha }}" ]]; then
+            DEPLOY_SHA="${{ inputs.image_sha }}"
+          else
+            DEPLOY_SHA="${{ github.sha }}"
+          fi
+
+          if [[ ! "$DEPLOY_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid commit SHA: $DEPLOY_SHA"
+            exit 1
+          fi
+
+          IMAGE_URI="${{ vars.DOCKERHUB_USERNAME }}/${{ vars.DOCKERHUB_REPOSITORY }}:sha-${DEPLOY_SHA}"
+
+          echo "deploy_sha=$DEPLOY_SHA" >> "$GITHUB_OUTPUT"
+          echo "image_uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
+
+          echo "Deployment SHA: $DEPLOY_SHA"
+          echo "Docker image: $IMAGE_URI"
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
@@ -39,28 +81,54 @@ jobs:
 
           PARAMETERS=$(jq -n \
             --arg deploy_path "${{ vars.AWS_DEPLOY_PATH }}" \
-            --arg image_uri "$IMAGE_URI" \
+            --arg image_uri "${{ steps.image.outputs.image_uri }}" \
             '{
               commands: [
                 "set -eu",
                 ("cd " + $deploy_path),
+
+                "PREVIOUS_IMAGE=$(docker inspect robbotgpt-app --format '{{.Config.Image}}')",
+                "echo Previous image: $PREVIOUS_IMAGE",
+
                 ("export ROBBOTGPT_IMAGE=" + $image_uri),
-                "echo Deploying $ROBBOTGPT_IMAGE",
+                "echo Deploying image: $ROBBOTGPT_IMAGE",
+
                 "docker pull \"$ROBBOTGPT_IMAGE\"",
                 "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-deps app",
-                "DEPLOYED_IMAGE=$(docker inspect robbotgpt-app --format '\''{{.Config.Image}}'\'')",
+
+                "DEPLOYED_IMAGE=$(docker inspect robbotgpt-app --format '{{.Config.Image}}')",
                 "echo Deployed image: $DEPLOYED_IMAGE",
                 "test \"$DEPLOYED_IMAGE\" = \"$ROBBOTGPT_IMAGE\"",
-                "for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:8080/health; then exit 0; fi; sleep 2; done",
-                "docker logs robbotgpt-app --tail=100",
-                "exit 1"
+
+                "DEPLOY_OK=false",
+                "for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:8080/health >/dev/null; then DEPLOY_OK=true; break; fi; echo \"Waiting for new version... attempt $i/30\"; sleep 2; done",
+
+                "if [ \"$DEPLOY_OK\" = \"true\" ]; then echo \"New version is healthy.\"; exit 0; fi",
+
+                "echo \"New version failed healthcheck. Starting rollback...\"",
+                "docker logs robbotgpt-app --tail=100 || true",
+
+                "export ROBBOTGPT_IMAGE=\"$PREVIOUS_IMAGE\"",
+                "echo Rolling back to: $ROBBOTGPT_IMAGE",
+
+                "docker pull \"$ROBBOTGPT_IMAGE\" || true",
+                "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-deps app",
+
+                "ROLLBACK_OK=false",
+                "for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:8080/health >/dev/null; then ROLLBACK_OK=true; break; fi; echo \"Waiting for rollback... attempt $i/30\"; sleep 2; done",
+
+                "if [ \"$ROLLBACK_OK\" = \"true\" ]; then echo \"Rollback successful: $PREVIOUS_IMAGE\"; exit 1; fi",
+
+                "echo \"CRITICAL: rollback failed.\"",
+                "docker logs robbotgpt-app --tail=100 || true",
+                "exit 2"
               ]
             }')
 
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "${{ vars.AWS_EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
-            --comment "Deploy RobBotGPT $IMAGE_URI" \
+            --comment "Deploy RobBotGPT ${{ steps.image.outputs.deploy_sha }}" \
             --parameters "$PARAMETERS" \
             --query "Command.CommandId" \
             --output text)
@@ -75,6 +143,7 @@ jobs:
             --instance-id "${{ vars.AWS_EC2_INSTANCE_ID }}"
 
       - name: Show deployment result
+        if: always()
         run: |
           aws ssm get-command-invocation \
             --command-id "${{ steps.deploy.outputs.command_id }}" \
@@ -90,5 +159,6 @@ jobs:
       - name: Deployment summary
         run: |
           echo "Deployment successful"
-          echo "Image: $IMAGE_URI"
+          echo "SHA: ${{ steps.image.outputs.deploy_sha }}"
+          echo "Image: ${{ steps.image.outputs.image_uri }}"
           echo "Production: ${{ vars.PRODUCTION_URL }}"
