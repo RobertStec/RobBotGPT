@@ -160,12 +160,69 @@ def test_should_stream_chunk_accepts_normal_ai_message():
         content="Hello"
     )
 
+    metadata = {
+        "langgraph_node": "chatbot"
+    }
+
+    result = should_stream_chunk(
+        chunk,
+        metadata,
+    )
+
+    assert result is True
+
+
+
+def test_should_stream_chunk_rejects_rerank_node():
+    chunk = AIMessageChunk(
+        content='{"items":[{"chunk_id":1,"score":1.0}]}'
+    )
+
+    metadata = {
+        "langgraph_node": "rerank"
+    }
+
+    result = should_stream_chunk(
+        chunk,
+        metadata,
+    )
+
+    assert result is False
+
+
+
+
+def test_should_stream_chunk_rejects_rewrite_query_node():
+    chunk = AIMessageChunk(
+        content="internal rewritten query"
+    )
+
+    metadata = {
+        "langgraph_node": "rewrite_query"
+    }
+
+    result = should_stream_chunk(
+        chunk,
+        metadata,
+    )
+
+    assert result is False
+
+
+
+def test_should_stream_chunk_rejects_missing_node_metadata():
+    chunk = AIMessage(
+        content="internal message"
+    )
+
     result = should_stream_chunk(
         chunk,
         {},
     )
 
-    assert result is True
+    assert result is False
+
+
 
 
 def test_should_stream_chunk_rejects_tool_node():

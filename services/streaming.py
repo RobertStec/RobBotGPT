@@ -50,7 +50,13 @@ def should_stream_chunk(chunk, metadata) -> bool:
 
     node_name = str(metadata.get("langgraph_node", "")).lower()
 
-    if "tool" in node_name:
+    visible_nodes = {
+        "chatbot",
+        "generate",
+        "no_answer",
+    }
+
+    if node_name not in visible_nodes:
         return False
 
     if isinstance(chunk, ToolMessage):
