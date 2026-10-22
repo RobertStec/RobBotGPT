@@ -63,6 +63,28 @@ def test_normalize_model_name_strips_whitespace():
     assert result == "gpt-4o-mini"
 
 
+
+def test_system_prompt_enforces_factual_accuracy():
+    prompt = agent.SYSTEM_PROMPT
+
+    assert (
+        "prioritize accuracy over sounding confident"
+        in prompt
+    )
+
+    assert (
+        "Do not invent definitions, features, APIs, "
+        "capabilities, or technical details."
+        in prompt
+    )
+
+    assert (
+        "clearly say that you are uncertain "
+        "instead of guessing"
+        in prompt
+    )
+
+
 # =========================================================
 # build_agent
 # =========================================================

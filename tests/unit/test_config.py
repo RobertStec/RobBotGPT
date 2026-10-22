@@ -45,7 +45,7 @@ def test_settings_default_values(
 
     assert (
         settings.openai_model
-        == "gpt-4o-mini"
+        == "gpt-5.6-sol"
     )
 
     assert (

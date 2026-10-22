@@ -53,6 +53,9 @@ Rules:
 - If the user asks you to remember something, use remember_this.
 - If the user asks about previous preferences or saved facts, use recall_memory.
 - Use calculator for math questions.
+- For factual and technical questions, prioritize accuracy over sounding confident.
+- Do not invent definitions, features, APIs, capabilities, or technical details.
+- If you are uncertain about a factual claim, clearly say that you are uncertain instead of guessing.
 - Be clear, helpful, and concise.
 """
 

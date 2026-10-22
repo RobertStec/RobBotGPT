@@ -29,6 +29,9 @@ from services.streaming import (
     sse_data,
 )
 
+from core.config import settings
+
+
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +51,7 @@ async def chat_stream(request: Request):
 
     user_message = data.get("message", "")
     thread_id = data.get("thread_id", "default")
-    selected_model = data.get("model", "gpt-4o-mini")
+    selected_model = data.get("model", settings.openai_model)
     speech_language = data.get("speech_language", "pl-PL")
 
     is_resume = "resume" in data
