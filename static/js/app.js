@@ -1075,7 +1075,7 @@ async function resumeInterruptedGraph(
     const selectedModel =
         modelSelect
             ? modelSelect.value
-            : "gpt-4o-mini";
+            : "gpt-5.6-sol";
 
     statusText.textContent =
         approved
@@ -1157,7 +1157,7 @@ async function sendMessage() {
         stopDictation();
     }
 
-    const selectedModel = modelSelect ? modelSelect.value : "gpt-4o-mini";
+    const selectedModel = modelSelect ? modelSelect.value : "gpt-5.6-sol";
 
     addMessage("user", message);
 

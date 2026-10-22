@@ -18,11 +18,9 @@ from sqlalchemy.engine import make_url
 
 
 ALLOWED_MODELS = frozenset({
+    "gpt-5.6-sol",
     "gpt-4o-mini",
     "gpt-4.1-mini",
-    "gpt-5.6-luna",
-    "gpt-5.6-terra",
-    "gpt-5.6-sol",
 })
 
 
@@ -55,7 +53,7 @@ class Settings(BaseSettings):
     # OpenAI
     # =====================================================
 
-    openai_model: str = "gpt-4o-mini"
+    openai_model: str = "gpt-5.6-sol"
 
     embedding_model: str = (
         "text-embedding-3-small"

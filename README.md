@@ -598,7 +598,7 @@ Main configuration groups include:
 
 ```env
 OPENAI_API_KEY=
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.6-sol
 EMBEDDING_MODEL=text-embedding-3-small
 ```
 
