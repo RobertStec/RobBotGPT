@@ -27,6 +27,9 @@ def test_settings_default_values(
         "APP_PORT",
         "APP_ENV",
         "APP_RELOAD",
+        "AUTH_COOKIE_NAME",
+        "AUTH_SESSION_TTL_HOURS",
+        "AUTH_COOKIE_SAMESITE",
     ]
 
     for variable in environment_variables:
@@ -96,6 +99,24 @@ def test_settings_default_values(
     assert settings.is_production is False
 
 
+    assert (
+        settings.auth_cookie_name
+        == "robbotgpt_session"
+    )
+
+    assert (
+        settings.auth_session_ttl_hours
+        == 168
+    )
+
+    assert (
+        settings.auth_cookie_samesite
+        == "lax"
+    )
+
+    assert settings.auth_cookie_secure is False
+
+
 
 
 def test_settings_reads_environment_variables(
@@ -139,6 +160,44 @@ def test_settings_reads_environment_variables(
         == 8000
     )
 
+
+
+def test_settings_reads_auth_environment_variables(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "AUTH_COOKIE_NAME",
+        "custom_session",
+    )
+
+    monkeypatch.setenv(
+        "AUTH_SESSION_TTL_HOURS",
+        "24",
+    )
+
+    monkeypatch.setenv(
+        "AUTH_COOKIE_SAMESITE",
+        "strict",
+    )
+
+    settings = Settings(
+        _env_file=None
+    )
+
+    assert (
+        settings.auth_cookie_name
+        == "custom_session"
+    )
+
+    assert (
+        settings.auth_session_ttl_hours
+        == 24
+    )
+
+    assert (
+        settings.auth_cookie_samesite
+        == "strict"
+    )
 
 
 
@@ -199,6 +258,8 @@ def test_settings_supports_production_environment(
     assert settings.app_reload is False
 
     assert settings.is_production is True
+
+    assert settings.auth_cookie_secure is True
 
 
 
@@ -503,3 +564,28 @@ def test_settings_allows_postgresql_in_development():
             "postgresql+psycopg://"
         )
     )
+
+
+
+@pytest.mark.parametrize(
+    "ttl",
+    [
+        "0",
+        "721",
+    ],
+)
+def test_settings_rejects_invalid_auth_session_ttl(
+    monkeypatch,
+    ttl,
+):
+    monkeypatch.setenv(
+        "AUTH_SESSION_TTL_HOURS",
+        ttl,
+    )
+
+    with pytest.raises(
+        ValidationError
+    ):
+        Settings(
+            _env_file=None
+        )

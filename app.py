@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 from api.routers.chat import router as chat_router
 from api.routers.conversations import router as conversations_router
 from api.routers.documents import router as documents_router
+from api.routers.auth import router as auth_router
 
 from core.config import settings
 from core.lifecycle import lifespan
@@ -56,6 +57,10 @@ app.mount(
 app.add_exception_handler(
     AppError,
     app_error_handler,
+)
+
+app.include_router(
+    auth_router
 )
 
 app.include_router(

@@ -22,3 +22,5 @@ psycopg[binary]
 pgvector
 pydantic-settings
 alembic
+pwdlib[argon2]
+email-validator

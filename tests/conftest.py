@@ -162,6 +162,8 @@ def postgres_database(
         "chat_messages",
         "long_term_memory",
         "conversations",
+        "auth_sessions",
+        "users",
     )
 
     with engine.begin() as connection:
