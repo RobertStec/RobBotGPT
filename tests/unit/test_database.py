@@ -1,18 +1,30 @@
+from datetime import (
+    datetime,
+    timedelta,
+)
+
 import database
 
 from database import (
+    AuthSession,
     ChatMessage,
     Conversation,
     LongTermMemory,
+    User,
+    create_auth_session,
     create_or_update_conversation,
+    create_user,
+    delete_auth_session,
     delete_conversation,
+    get_auth_session_by_token_hash,
     get_chat_history,
+    get_user_by_email,
+    get_user_by_id,
     list_conversations,
     save_chat_message,
     save_memory,
     search_memory,
 )
-
 
 # Tworzenie konwersacji
 
@@ -413,6 +425,229 @@ def test_delete_conversation_returns_false_when_not_found(
 ):
     result = delete_conversation(
         "does-not-exist"
+    )
+
+    assert result is False
+
+
+
+# =========================================================
+# Authentication
+# =========================================================
+
+
+def test_create_user(
+    test_database,
+):
+    user = create_user(
+        email="user@example.com",
+        password_hash="hashed-password",
+    )
+
+    assert user.id is not None
+    assert user.email == "user@example.com"
+    assert user.password_hash == "hashed-password"
+    assert user.is_active is True
+
+    db = test_database()
+
+    try:
+        stored_user = (
+            db.query(User)
+            .filter(
+                User.email
+                == "user@example.com"
+            )
+            .first()
+        )
+
+        assert stored_user is not None
+
+    finally:
+        db.close()
+
+
+
+
+def test_get_user_by_email(
+    test_database,
+):
+    created = create_user(
+        email="email@example.com",
+        password_hash="hash",
+    )
+
+    user = get_user_by_email(
+        "email@example.com"
+    )
+
+    assert user is not None
+    assert user.id == created.id
+    assert user.email == "email@example.com"
+
+
+
+
+def test_get_user_by_email_returns_none_when_missing(
+    test_database,
+):
+    user = get_user_by_email(
+        "missing@example.com"
+    )
+
+    assert user is None
+
+
+
+
+def test_get_user_by_id(
+    test_database,
+):
+    created = create_user(
+        email="id@example.com",
+        password_hash="hash",
+    )
+
+    user = get_user_by_id(
+        created.id
+    )
+
+    assert user is not None
+    assert user.id == created.id
+    assert user.email == "id@example.com"
+
+
+
+
+def test_create_auth_session(
+    test_database,
+):
+    user = create_user(
+        email="session@example.com",
+        password_hash="hash",
+    )
+
+    expires_at = (
+        datetime.utcnow()
+        + timedelta(hours=24)
+    )
+
+    auth_session = create_auth_session(
+        user_id=user.id,
+        token_hash="a" * 64,
+        expires_at=expires_at,
+    )
+
+    assert auth_session.id is not None
+    assert auth_session.user_id == user.id
+    assert auth_session.token_hash == "a" * 64
+
+    db = test_database()
+
+    try:
+        stored_session = (
+            db.query(AuthSession)
+            .filter(
+                AuthSession.id
+                == auth_session.id
+            )
+            .first()
+        )
+
+        assert stored_session is not None
+
+    finally:
+        db.close()
+
+
+
+
+def test_get_auth_session_by_token_hash(
+    test_database,
+):
+    user = create_user(
+        email="lookup@example.com",
+        password_hash="hash",
+    )
+
+    token_hash = "b" * 64
+
+    created = create_auth_session(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=(
+            datetime.utcnow()
+            + timedelta(hours=24)
+        ),
+    )
+
+    auth_session = (
+        get_auth_session_by_token_hash(
+            token_hash
+        )
+    )
+
+    assert auth_session is not None
+    assert auth_session.id == created.id
+    assert auth_session.user_id == user.id
+
+
+
+
+def test_get_auth_session_returns_none_when_missing(
+    test_database,
+):
+    auth_session = (
+        get_auth_session_by_token_hash(
+            "c" * 64
+        )
+    )
+
+    assert auth_session is None
+
+
+
+
+def test_delete_auth_session(
+    test_database,
+):
+    user = create_user(
+        email="delete@example.com",
+        password_hash="hash",
+    )
+
+    token_hash = "d" * 64
+
+    create_auth_session(
+        user_id=user.id,
+        token_hash=token_hash,
+        expires_at=(
+            datetime.utcnow()
+            + timedelta(hours=24)
+        ),
+    )
+
+    result = delete_auth_session(
+        token_hash
+    )
+
+    assert result is True
+
+    assert (
+        get_auth_session_by_token_hash(
+            token_hash
+        )
+        is None
+    )
+
+
+
+
+def test_delete_auth_session_returns_false_when_missing(
+    test_database,
+):
+    result = delete_auth_session(
+        "e" * 64
     )
 
     assert result is False

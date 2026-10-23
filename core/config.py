@@ -49,6 +49,25 @@ class Settings(BaseSettings):
         "production",
     ] = "development"
 
+
+    # =====================================================
+    # Authentication
+    # =====================================================
+
+    auth_cookie_name: str = "robbotgpt_session"
+
+    auth_session_ttl_hours: int = Field(
+        default=168,
+        ge=1,
+        le=720,
+    )
+
+    auth_cookie_samesite: Literal[
+        "lax",
+        "strict",
+    ] = "lax"
+
+
     # =====================================================
     # OpenAI
     # =====================================================
@@ -182,6 +201,7 @@ class Settings(BaseSettings):
         "embedding_model",
         "database_url",
         "app_host",
+        "auth_cookie_name",
     )
     @classmethod
     def validate_non_empty_string(
@@ -276,6 +296,10 @@ class Settings(BaseSettings):
             self.app_env
             == "production"
         )
+
+    @property
+    def auth_cookie_secure(self) -> bool:
+        return self.is_production
 
     # =========================================================
     # Logging

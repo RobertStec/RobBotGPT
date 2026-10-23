@@ -72,6 +72,31 @@ class ConversationDeletionError(AppError):
     )
 
 
+class UserAlreadyExistsError(AppError):
+    status_code = 409
+    error_code = "user_already_exists"
+    default_message = (
+        "A user with this email already exists."
+    )
+
+
+class InvalidCredentialsError(AppError):
+    status_code = 401
+    error_code = "invalid_credentials"
+    default_message = (
+        "Invalid email or password."
+    )
+
+
+class AuthenticationRequiredError(AppError):
+    status_code = 401
+    error_code = "authentication_required"
+    default_message = (
+        "Authentication required."
+    )
+
+
+
 async def app_error_handler(
     request: Request,
     exc: AppError,

@@ -9,6 +9,7 @@ from sqlalchemy import (
     String,
     Text,
     DateTime,
+    Boolean,
     ForeignKey,
     Index,
     UniqueConstraint,
@@ -196,6 +197,26 @@ def clear_database_resource_cache() -> None:
 EMBEDDING_DIMENSION = 1536
 
 
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(320), nullable=False, unique=True, index=True)
+    password_hash = Column(String(255), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash = Column(String(64), nullable=False, unique=True, index=True)
+    expires_at = Column( DateTime, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+
 class Conversation(Base):
     __tablename__ = "conversations"
 
@@ -268,6 +289,158 @@ class RagChunk(Base):
             },
         ),
     )
+
+
+
+
+def create_user(
+    email: str,
+    password_hash: str,
+) -> User:
+    db = create_session()
+
+    try:
+        user = User(
+            email=email,
+            password_hash=password_hash,
+            is_active=True,
+            created_at=datetime.utcnow(),
+        )
+
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        return user
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+
+
+
+def get_user_by_email(
+    email: str,
+) -> User | None:
+    db = create_session()
+
+    try:
+        return (
+            db.query(User)
+            .filter(User.email == email)
+            .first()
+        )
+
+    finally:
+        db.close()
+
+
+
+
+def get_user_by_id(
+    user_id: int,
+) -> User | None:
+    db = create_session()
+
+    try:
+        return (
+            db.query(User)
+            .filter(User.id == user_id)
+            .first()
+        )
+
+    finally:
+        db.close()
+
+
+
+
+def create_auth_session(
+    user_id: int,
+    token_hash: str,
+    expires_at: datetime,
+) -> AuthSession:
+    db = create_session()
+
+    try:
+        auth_session = AuthSession(
+            user_id=user_id,
+            token_hash=token_hash,
+            expires_at=expires_at,
+            created_at=datetime.utcnow(),
+        )
+
+        db.add(auth_session)
+        db.commit()
+        db.refresh(auth_session)
+
+        return auth_session
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+
+
+
+def get_auth_session_by_token_hash(
+    token_hash: str,
+) -> AuthSession | None:
+    db = create_session()
+
+    try:
+        return (
+            db.query(AuthSession)
+            .filter(
+                AuthSession.token_hash
+                == token_hash
+            )
+            .first()
+        )
+
+    finally:
+        db.close()
+
+
+
+
+def delete_auth_session(
+    token_hash: str,
+) -> bool:
+    db = create_session()
+
+    try:
+        auth_session = (
+            db.query(AuthSession)
+            .filter(
+                AuthSession.token_hash
+                == token_hash
+            )
+            .first()
+        )
+
+        if auth_session is None:
+            return False
+
+        db.delete(auth_session)
+        db.commit()
+
+        return True
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
 
 
 
