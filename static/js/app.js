@@ -8,14 +8,70 @@ const speechLanguageSelect = document.getElementById("speechLanguageSelect");
 const noticeText = document.getElementById("noticeText");
 const micBtn = document.getElementById("micBtn");
 const toolProgressMap = new Map();
+const authScreen = document.getElementById("authScreen");
+const authForm = document.getElementById("authForm");
+const authEmail = document.getElementById("authEmail");
+const authPassword = document.getElementById("authPassword");
+const authSubmitBtn = document.getElementById("authSubmitBtn");
+const authLoginTab = document.getElementById("authLoginTab");
+const authRegisterTab = document.getElementById("authRegisterTab");
+const authTitle = document.getElementById("authTitle");
+const authMessage = document.getElementById("authMessage");
+const sidebarUser = document.getElementById("sidebarUser");
+const userEmail = document.getElementById("userEmail");
+const logoutBtn = document.getElementById("logoutBtn");
 
 let ragProgress = null;
 let waitingForApproval = false;
-let threadId = localStorage.getItem("thread_id");
 
-if (!threadId) {
-    threadId = crypto.randomUUID();
-    localStorage.setItem("thread_id", threadId);
+let currentUser = null;
+let authMode = "login";
+let threadId = null;
+
+
+function getThreadStorageKey() {
+    if (!currentUser) {
+        return null;
+    }
+
+    return `thread_id_user_${currentUser.id}`;
+}
+
+
+function initializeThreadId() {
+    const storageKey =
+        getThreadStorageKey();
+
+    if (!storageKey) {
+        return;
+    }
+
+    threadId =
+        localStorage.getItem(
+            storageKey
+        );
+
+    if (!threadId) {
+        threadId = crypto.randomUUID();
+
+        persistThreadId();
+    }
+}
+
+
+function persistThreadId() {
+    const storageKey =
+        getThreadStorageKey();
+
+    if (
+        storageKey
+        && threadId
+    ) {
+        localStorage.setItem(
+            storageKey,
+            threadId
+        );
+    }
 }
 
 const savedModel = localStorage.getItem("selected_model");
@@ -68,6 +124,296 @@ if (speechLanguageSelect) {
         }
     );
 }
+
+function setAuthMode(mode) {
+    authMode = mode;
+
+    const isLogin =
+        mode === "login";
+
+    authLoginTab.classList.toggle(
+        "active",
+        isLogin
+    );
+
+    authRegisterTab.classList.toggle(
+        "active",
+        !isLogin
+    );
+
+    authTitle.textContent =
+        isLogin
+            ? "Welcome back"
+            : "Create account";
+
+    authSubmitBtn.textContent =
+        isLogin
+            ? "Log in"
+            : "Create account";
+
+    authPassword.autocomplete =
+        isLogin
+            ? "current-password"
+            : "new-password";
+
+    authMessage.textContent = "";
+    authMessage.classList.remove(
+        "success"
+    );
+}
+
+
+function showAuthScreen(
+    message = ""
+) {
+    authScreen.classList.remove(
+        "hidden"
+    );
+
+    authMessage.textContent =
+        message;
+}
+
+
+function hideAuthScreen() {
+    authScreen.classList.add(
+        "hidden"
+    );
+}
+
+
+function setAuthenticatedUser(
+    user
+) {
+    currentUser = user;
+
+    userEmail.textContent =
+        user.email;
+
+    sidebarUser.classList.remove(
+        "hidden"
+    );
+
+    initializeThreadId();
+
+    // Remove the legacy shared thread key.
+    localStorage.removeItem(
+        "thread_id"
+    );
+}
+
+
+async function getCurrentUser() {
+    const response = await fetch(
+        "/auth/me"
+    );
+
+    if (response.status === 401) {
+        return null;
+    }
+
+    await ensureResponseOk(
+        response,
+        "Could not verify session."
+    );
+
+    return await response.json();
+}
+
+
+async function submitAuthForm(
+    event
+) {
+    event.preventDefault();
+
+    const email =
+        authEmail.value.trim();
+
+    const password =
+        authPassword.value;
+
+    if (
+        authMode === "register"
+        && password.length < 12
+    ) {
+        authMessage.textContent =
+            "Password must contain at least 12 characters.";
+
+        return;
+    }
+
+    authSubmitBtn.disabled = true;
+    authMessage.textContent = "";
+    authMessage.classList.remove(
+        "success"
+    );
+
+    try {
+        const response = await fetch(
+            `/auth/${authMode}`,
+            {
+                method: "POST",
+
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+
+                body: JSON.stringify({
+                    email,
+                    password
+                })
+            }
+        );
+
+        let data = null;
+
+        try {
+            data = await response.json();
+        } catch (error) {
+            console.error(
+                "Could not parse auth response:",
+                error
+            );
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                getApiErrorMessage(
+                    data,
+                    "Authentication failed."
+                )
+            );
+        }
+
+        if (
+            authMode === "register"
+        ) {
+            setAuthMode(
+                "login"
+            );
+
+            authEmail.value =
+                email;
+
+            authPassword.value = "";
+
+            authMessage.textContent =
+                "Account created. You can now log in.";
+
+            authMessage.classList.add(
+                "success"
+            );
+
+            return;
+        }
+
+        setAuthenticatedUser(
+            data.user
+        );
+
+        hideAuthScreen();
+
+        await loadConversation(
+            threadId
+        );
+
+    } catch (error) {
+        console.error(
+            "Authentication error:",
+            error
+        );
+
+        authMessage.textContent =
+            error.message;
+
+    } finally {
+        authSubmitBtn.disabled =
+            false;
+    }
+}
+
+
+async function logoutUser() {
+    try {
+        const response = await fetch(
+            "/auth/logout",
+            {
+                method: "POST"
+            }
+        );
+
+        await ensureResponseOk(
+            response,
+            "Could not log out."
+        );
+
+        currentUser = null;
+        threadId = null;
+
+        conversationList.innerHTML = "";
+
+        sidebarUser.classList.add(
+            "hidden"
+        );
+
+        renderWelcome();
+
+        authForm.reset();
+
+        setAuthMode(
+            "login"
+        );
+
+        showAuthScreen(
+            "You have been logged out."
+        );
+
+    } catch (error) {
+        console.error(
+            "Logout error:",
+            error
+        );
+
+        alert(
+            error.message
+        );
+    }
+}
+
+
+async function initializeApp() {
+    try {
+        const user =
+            await getCurrentUser();
+
+        if (!user) {
+            showAuthScreen();
+            return;
+        }
+
+        setAuthenticatedUser(
+            user
+        );
+
+        hideAuthScreen();
+
+        await loadConversation(
+            threadId
+        );
+
+    } catch (error) {
+        console.error(
+            "Application initialization failed:",
+            error
+        );
+
+        showAuthScreen(
+            "Could not initialize application."
+        );
+    }
+}
+
 
 function setupSpeechRecognition() {
     const SpeechRecognition =
@@ -656,10 +1002,7 @@ async function deleteConversation(conversationThreadId) {
 
             threadId = crypto.randomUUID();
 
-            localStorage.setItem(
-                "thread_id",
-                threadId
-            );
+            persistThreadId();
 
             renderWelcome();
         }
@@ -686,7 +1029,7 @@ async function deleteConversation(conversationThreadId) {
 
 async function loadConversation(selectedThreadId) {
     threadId = selectedThreadId;
-    localStorage.setItem("thread_id", threadId);
+    persistThreadId();
 
     try {
         const response = await fetch(
@@ -1297,7 +1640,7 @@ async function uploadFile() {
 
 async function newChat() {
     threadId = crypto.randomUUID();
-    localStorage.setItem("thread_id", threadId);
+    persistThreadId();
 
     if (isDictating) {
         stopDictation();
@@ -1308,8 +1651,25 @@ async function newChat() {
     messageInput.focus();
 }
 
-loadConversations();
+authLoginTab.addEventListener(
+    "click",
+    () => setAuthMode("login")
+);
 
-if (threadId) {
-    loadConversation(threadId);
-}
+authRegisterTab.addEventListener(
+    "click",
+    () => setAuthMode("register")
+);
+
+authForm.addEventListener(
+    "submit",
+    submitAuthForm
+);
+
+logoutBtn.addEventListener(
+    "click",
+    logoutUser
+);
+
+
+initializeApp();

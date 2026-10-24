@@ -10,6 +10,66 @@
 
 <body>
 
+    <div id="authScreen" class="auth-screen">
+        <div class="auth-card">
+            <div class="auth-brand">RobBotGPT</div>
+
+            <h1 id="authTitle">Welcome back</h1>
+            <p class="auth-subtitle">
+                Sign in to continue to your conversations.
+            </p>
+
+            <div class="auth-tabs">
+                <button
+                    type="button"
+                    id="authLoginTab"
+                    class="auth-tab active"
+                >
+                    Log in
+                </button>
+
+                <button
+                    type="button"
+                    id="authRegisterTab"
+                    class="auth-tab"
+                >
+                    Register
+                </button>
+            </div>
+
+            <form id="authForm" class="auth-form">
+                <input
+                    type="email"
+                    id="authEmail"
+                    placeholder="Email"
+                    autocomplete="email"
+                    required
+                >
+
+                <input
+                    type="password"
+                    id="authPassword"
+                    placeholder="Password"
+                    autocomplete="current-password"
+                    required
+                >
+
+                <button
+                    type="submit"
+                    id="authSubmitBtn"
+                    class="auth-submit"
+                >
+                    Log in
+                </button>
+
+                <div
+                    id="authMessage"
+                    class="auth-message"
+                ></div>
+            </form>
+        </div>
+    </div>
+
     <aside class="sidebar">
         <div class="brand">RobBotGPT</div>
 
@@ -17,12 +77,46 @@
 
         <div class="history-title">Recent Chats</div>
         <div id="conversationList"></div>
+
+        <div
+            id="sidebarUser"
+            class="sidebar-user hidden"
+        >
+            <div
+                id="userEmail"
+                class="sidebar-user-email"
+            ></div>
+
+            <button
+                type="button"
+                id="logoutBtn"
+                class="logout-btn"
+            >
+                Log out
+            </button>
+        </div>
     </aside>
 
     <main class="main">
         <div class="topbar">
             <div>AI Chatbot</div>
-            <div class="status" id="status">Ready</div>
+
+            <div class="topbar-actions">
+                <div
+                    class="status"
+                    id="status"
+                >
+                    Ready
+                </div>
+
+                <button
+                    type="button"
+                    class="mobile-logout-btn"
+                    onclick="logoutUser()"
+                >
+                    Log out
+                </button>
+            </div>
         </div>
 
         <div class="chat-container" id="chatContainer">
