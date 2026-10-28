@@ -117,6 +117,14 @@ def test_rag_eval_target_returns_generate_result(
         },
     )
 
+    mock_eval_user = mocker.Mock()
+    mock_eval_user.id = 101
+
+    mocker.patch(
+        "evals.target.get_eval_user",
+        return_value=mock_eval_user,
+    )
+
     target = build_rag_eval_target(
         thread_id="eval-thread",
         llm=llm,
@@ -198,6 +206,14 @@ def test_rag_eval_target_returns_no_answer_result(
                 )
             ]
         },
+    )
+
+    mock_eval_user = mocker.Mock()
+    mock_eval_user.id = 101
+
+    mocker.patch(
+        "evals.target.get_eval_user",
+        return_value=mock_eval_user,
     )
 
     target = build_rag_eval_target(

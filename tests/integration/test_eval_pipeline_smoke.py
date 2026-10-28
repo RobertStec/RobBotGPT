@@ -97,6 +97,14 @@ def test_evaluation_pipeline_smoke(
         },
     )
 
+    mock_eval_user = mocker.Mock()
+    mock_eval_user.id = 101
+
+    mocker.patch(
+        "evals.target.get_eval_user",
+        return_value=mock_eval_user,
+    )
+
     target = build_rag_eval_target(
         thread_id="eval-smoke-thread",
         llm=llm,
