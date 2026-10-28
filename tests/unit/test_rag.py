@@ -2,6 +2,7 @@ import pytest
 
 import rag
 
+TEST_USER_ID = 101
 
 
 
@@ -174,6 +175,7 @@ def test_add_document_to_rag_creates_chunks_with_metadata(
         file_path=str(file_path),
         thread_id="thread-123",
         original_filename="project.txt",
+        user_id=TEST_USER_ID,
     )
 
     assert result == {
@@ -197,6 +199,11 @@ def test_add_document_to_rag_creates_chunks_with_metadata(
     )
 
     assert (
+        stored_document.user_id
+        == TEST_USER_ID
+    )
+
+    assert (
         stored_document.thread_id
         == "thread-123"
     )
@@ -210,6 +217,7 @@ def test_add_document_to_rag_creates_chunks_with_metadata(
         stored_document.stored_name
         == "stored_document.txt"
     )
+
 
     db.flush.assert_called_once_with()
 
@@ -269,6 +277,7 @@ def test_add_document_to_rag_splits_long_document(
     result = rag.add_document_to_rag(
         file_path=str(file_path),
         thread_id="thread-long",
+        user_id=TEST_USER_ID,
     )
 
     _, db = mock_pgvector_storage
@@ -319,6 +328,7 @@ def test_add_document_to_rag_rejects_empty_document(
         rag.add_document_to_rag(
             file_path=str(file_path),
             thread_id="thread-empty",
+            user_id=TEST_USER_ID,
         )
 
     embeddings.embed_documents.assert_not_called()
@@ -371,6 +381,7 @@ def test_add_pdf_preserves_page_numbers(
         file_path=str(file_path),
         thread_id="thread-pdf",
         original_filename="manual.pdf",
+        user_id=TEST_USER_ID,
     )
 
     chunks = (
@@ -645,7 +656,7 @@ def test_build_rag_context_rejects_invalid_max_chars():
 
 # Test Retrieval - poprawny filtr thread_id
 
-def test_retrieve_from_rag_filters_by_thread_id(
+def test_retrieve_from_rag_filters_by_thread_and_user_id(
     mock_pgvector_retrieval,
 ):
     embeddings, db = (
@@ -657,6 +668,7 @@ def test_retrieve_from_rag_filters_by_thread_id(
         thread_id="thread-123",
         source_name="project.pdf",
         stored_name="stored_project.pdf",
+        user_id=TEST_USER_ID,
     )
 
     chunk = rag.RagChunk(
@@ -692,6 +704,7 @@ def test_retrieve_from_rag_filters_by_thread_id(
     result = rag.retrieve_from_rag(
         query="What does LangGraph do?",
         thread_id="thread-123",
+        user_id=TEST_USER_ID,
         k=4,
     )
 
@@ -709,6 +722,22 @@ def test_retrieve_from_rag_filters_by_thread_id(
 
     query.limit.assert_called_once_with(
         4
+    )
+
+    filter_args = (
+        query.filter.call_args.args
+    )
+
+    assert len(filter_args) == 2
+
+    assert (
+        "rag_documents.thread_id"
+        in str(filter_args[0])
+    )
+
+    assert (
+        "rag_documents.user_id"
+        in str(filter_args[1])
     )
 
     assert (
@@ -754,6 +783,7 @@ def test_retrieve_from_rag_returns_empty_result_when_no_documents(
     result = rag.retrieve_from_rag(
         query="Unknown information",
         thread_id="thread-empty",
+        user_id=TEST_USER_ID,
         k=4,
     )
 
@@ -784,6 +814,7 @@ def test_retrieve_from_rag_deduplicates_sources(
         thread_id="thread-123",
         source_name="manual.pdf",
         stored_name="stored_manual.pdf",
+        user_id=TEST_USER_ID,
     )
 
     chunk_1 = rag.RagChunk(
@@ -825,6 +856,7 @@ def test_retrieve_from_rag_deduplicates_sources(
     result = rag.retrieve_from_rag(
         query="question",
         thread_id="thread-123",
+        user_id=TEST_USER_ID,
     )
 
     assert len(
@@ -864,6 +896,7 @@ def test_retrieve_candidates_from_rag_returns_distance_and_metadata(
         thread_id="thread-123",
         source_name="project.pdf",
         stored_name="stored_project.pdf",
+        user_id=TEST_USER_ID,
     )
 
     chunk = rag.RagChunk(
@@ -900,6 +933,7 @@ def test_retrieve_candidates_from_rag_returns_distance_and_metadata(
         rag.retrieve_candidates_from_rag(
             query="What does LangGraph do?",
             thread_id="thread-123",
+            user_id=TEST_USER_ID,
             k=4,
         )
     )
@@ -949,6 +983,7 @@ def test_retrieve_candidates_from_rag_preserves_distance_order(
         thread_id="thread-order",
         source_name="manual.pdf",
         stored_name="stored_manual.pdf",
+        user_id=TEST_USER_ID,
     )
 
     best_chunk = rag.RagChunk(
@@ -1001,6 +1036,7 @@ def test_retrieve_candidates_from_rag_preserves_distance_order(
         rag.retrieve_candidates_from_rag(
             query="agent workflow",
             thread_id="thread-order",
+            user_id=TEST_USER_ID,
             k=8,
         )
     )
@@ -1185,7 +1221,8 @@ def test_delete_thread_documents_removes_chunks_and_files(
 
     result = (
         rag.delete_thread_documents(
-            "thread-delete"
+            "thread-delete",
+            user_id=TEST_USER_ID,
         )
     )
 
@@ -1241,7 +1278,8 @@ def test_delete_thread_documents_handles_empty_thread(
 
     result = (
         rag.delete_thread_documents(
-            "unknown-thread"
+            "unknown-thread",
+            user_id=TEST_USER_ID,
         )
     )
 
@@ -1356,6 +1394,7 @@ def test_retrieve_from_rag_handles_source_without_page(
         thread_id="thread-txt",
         source_name="notes.txt",
         stored_name="stored_notes.txt",
+        user_id=TEST_USER_ID,
     )
 
     chunk = rag.RagChunk(
@@ -1386,6 +1425,7 @@ def test_retrieve_from_rag_handles_source_without_page(
     result = rag.retrieve_from_rag(
         query="What is in notes?",
         thread_id="thread-txt",
+        user_id=TEST_USER_ID,
         k=4,
     )
 
@@ -1485,6 +1525,7 @@ def test_delete_document_from_rag_deletes_only_selected_document(
         thread_id="thread-1",
         source_name="selected.txt",
         stored_name="uuid_selected.txt",
+        user_id=TEST_USER_ID,
     )
 
     db = mock_pgvector_delete
@@ -1517,6 +1558,7 @@ def test_delete_document_from_rag_deletes_only_selected_document(
         rag.delete_document_from_rag(
             thread_id="thread-1",
             stored_name="uuid_selected.txt",
+            user_id=TEST_USER_ID,
         )
     )
 
@@ -1535,6 +1577,72 @@ def test_delete_document_from_rag_deletes_only_selected_document(
         "deleted_chunks": 2,
         "deleted_files": 1,
     }
+
+
+
+def test_delete_document_from_rag_does_not_delete_foreign_document(
+    tmp_path,
+    monkeypatch,
+    mock_pgvector_delete,
+    mocker,
+):
+    upload_dir = (
+        tmp_path
+        / "uploads"
+    )
+
+    upload_dir.mkdir()
+
+    monkeypatch.setattr(
+        rag.settings,
+        "upload_dir",
+        upload_dir,
+    )
+
+    foreign_file = (
+        upload_dir
+        / "foreign.txt"
+    )
+
+    foreign_file.write_text(
+        "private",
+        encoding="utf-8",
+    )
+
+    db = mock_pgvector_delete
+
+    document_query = mocker.Mock()
+
+    db.query.return_value = (
+        document_query
+    )
+
+    (
+        document_query
+        .filter
+        .return_value
+        .first
+        .return_value
+    ) = None
+
+    result = (
+        rag.delete_document_from_rag(
+            thread_id="foreign-thread",
+            stored_name="foreign.txt",
+            user_id=TEST_USER_ID,
+        )
+    )
+
+    assert result == {
+        "deleted_chunks": 0,
+        "deleted_files": 0,
+    }
+
+    assert foreign_file.exists() is True
+
+    db.delete.assert_not_called()
+    db.commit.assert_not_called()
+    db.close.assert_called_once_with()
 
 
 
@@ -1569,6 +1677,7 @@ def test_add_document_to_rag_rolls_back_when_database_write_fails(
             file_path=str(file_path),
             thread_id="thread-rollback",
             original_filename="rollback.txt",
+            user_id=TEST_USER_ID,
         )
 
     embeddings.embed_documents.assert_called_once()
@@ -1610,6 +1719,7 @@ def test_delete_document_from_rag_rolls_back_when_database_delete_fails(
         thread_id="thread-fail",
         source_name="document.txt",
         stored_name="stored.txt",
+        user_id=TEST_USER_ID,
     )
 
     db = mock_pgvector_delete
@@ -1649,6 +1759,7 @@ def test_delete_document_from_rag_rolls_back_when_database_delete_fails(
         rag.delete_document_from_rag(
             thread_id="thread-fail",
             stored_name="stored.txt",
+            user_id=TEST_USER_ID,
         )
 
     db.rollback.assert_called_once_with()

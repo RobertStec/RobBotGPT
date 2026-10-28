@@ -8,6 +8,9 @@ from core.exceptions import (
 )
 
 
+USER_ID = 101
+
+
 
 def test_process_uploaded_document_success(
     tmp_path,
@@ -34,9 +37,16 @@ def test_process_uploaded_document_success(
         },
     )
 
+    mock_exists = mocker.patch.object(
+        document_service,
+        "conversation_exists",
+        return_value=False,
+    )
+
     mock_conversation = mocker.patch.object(
         document_service,
         "create_or_update_conversation",
+        return_value=True,
     )
 
     result = (
@@ -45,6 +55,7 @@ def test_process_uploaded_document_success(
             filename="document.txt",
             content=b"Document content",
             thread_id="thread-1",
+            user_id=USER_ID,
         )
     )
 
@@ -66,11 +77,18 @@ def test_process_uploaded_document_success(
         file_path=str(expected_path),
         thread_id="thread-1",
         original_filename="document.txt",
+        user_id=USER_ID,
     )
 
     mock_conversation.assert_called_once_with(
         "thread-1",
         "Uploaded document",
+        user_id=USER_ID,
+    )
+
+    mock_exists.assert_called_once_with(
+        "thread-1",
+        user_id=USER_ID,
     )
 
 
@@ -105,6 +123,7 @@ def test_process_uploaded_document_rejects_unsupported_extension(
             filename="image.jpg",
             content=b"image",
             thread_id="thread-1",
+            user_id=USER_ID,
         )
 
     mock_add.assert_not_called()
@@ -152,9 +171,22 @@ def test_process_uploaded_document_rolls_back_when_rag_fails(
         },
     )
 
+    mocker.patch.object(
+        document_service,
+        "conversation_exists",
+        return_value=False,
+    )
+
     mock_conversation = mocker.patch.object(
         document_service,
         "create_or_update_conversation",
+        return_value=True,
+    )
+
+    mock_delete_conversation = mocker.patch.object(
+        document_service,
+        "delete_conversation",
+        return_value=True,
     )
 
     with pytest.raises(
@@ -164,20 +196,31 @@ def test_process_uploaded_document_rolls_back_when_rag_fails(
             filename="document.txt",
             content=b"content",
             thread_id="thread-error",
+            user_id=USER_ID,
         )
 
     mock_cleanup.assert_called_once_with(
         thread_id="thread-error",
         stored_name="file-id_document.txt",
+        user_id=USER_ID,
     )
 
-    mock_conversation.assert_not_called()
+    mock_conversation.assert_called_once_with(
+        "thread-error",
+        "Uploaded document",
+        user_id=USER_ID,
+    )
+
+    mock_delete_conversation.assert_called_once_with(
+        "thread-error",
+        user_id=USER_ID,
+)
 
 
 
 # Test awarii DB po udanym RAG
 
-def test_process_uploaded_document_rolls_back_when_database_fails(
+def test_process_uploaded_document_stops_before_rag_when_database_fails(
     tmp_path,
     monkeypatch,
     mocker,
@@ -195,11 +238,13 @@ def test_process_uploaded_document_rolls_back_when_database_fails(
 
     mocker.patch.object(
         document_service,
+        "conversation_exists",
+        return_value=False,
+    )
+
+    mock_add = mocker.patch.object(
+        document_service,
         "add_document_to_rag",
-        return_value={
-            "filename": "document.txt",
-            "chunks": 2,
-        },
     )
 
     mocker.patch.object(
@@ -213,10 +258,6 @@ def test_process_uploaded_document_rolls_back_when_database_fails(
     mock_cleanup = mocker.patch.object(
         document_service,
         "delete_document_from_rag",
-        return_value={
-            "deleted_chunks": 2,
-            "deleted_files": 1,
-        },
     )
 
     with pytest.raises(
@@ -226,12 +267,15 @@ def test_process_uploaded_document_rolls_back_when_database_fails(
             filename="document.txt",
             content=b"content",
             thread_id="thread-db-error",
+            user_id=USER_ID,
         )
 
-    mock_cleanup.assert_called_once_with(
-        thread_id="thread-db-error",
-        stored_name="file-id_document.txt",
-    )
+    mock_add.assert_not_called()
+    mock_cleanup.assert_not_called()
+
+    assert list(
+        tmp_path.iterdir()
+    ) == []
 
 
 
@@ -269,6 +313,24 @@ def test_process_uploaded_document_removes_file_when_rag_cleanup_fails(
         ),
     )
 
+    mocker.patch.object(
+        document_service,
+        "conversation_exists",
+        return_value=False,
+    )
+
+    mocker.patch.object(
+        document_service,
+        "create_or_update_conversation",
+        return_value=True,
+    )
+
+    mock_delete_conversation = mocker.patch.object(
+        document_service,
+        "delete_conversation",
+        return_value=True,
+    )
+
     expected_path = (
         tmp_path
         / "file-id_document.txt"
@@ -281,9 +343,15 @@ def test_process_uploaded_document_removes_file_when_rag_cleanup_fails(
             filename="document.txt",
             content=b"content",
             thread_id="thread-1",
+            user_id=USER_ID,
         )
 
     assert (
         expected_path.exists()
         is False
+    )
+
+    mock_delete_conversation.assert_called_once_with(
+        "thread-1",
+        user_id=USER_ID,
     )

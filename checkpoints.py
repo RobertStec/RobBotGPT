@@ -30,6 +30,37 @@ _CHECKPOINT_CACHE_LOCK = Lock()
 
 
 
+def build_checkpoint_thread_id(
+    thread_id: str,
+    *,
+    user_id: int,
+) -> str:
+    """
+    Build an internal LangGraph checkpoint thread ID
+    isolated by authenticated user.
+    """
+
+    if not thread_id:
+        raise ValueError(
+            "thread_id is required."
+        )
+
+    if (
+        not isinstance(user_id, int)
+        or isinstance(user_id, bool)
+        or user_id < 1
+    ):
+        raise ValueError(
+            "user_id must be a positive integer."
+        )
+
+    return (
+        f"user:{user_id}:"
+        f"thread:{thread_id}"
+    )
+
+
+
 
 def _resolve_checkpoint_database_url(
     database_url: str | None = None,
@@ -166,16 +197,25 @@ def get_checkpointer(
 
 def delete_thread_checkpoints(
     thread_id: str,
+    *,
+    user_id: int,
 ) -> None:
     """
     Delete all LangGraph checkpoints
-    associated with a thread.
+    associated with one user's conversation.
     """
+
+    checkpoint_thread_id = (
+        build_checkpoint_thread_id(
+            thread_id,
+            user_id=user_id,
+        )
+    )
 
     checkpointer = get_checkpointer()
 
     checkpointer.delete_thread(
-        thread_id
+        checkpoint_thread_id
     )
 
 

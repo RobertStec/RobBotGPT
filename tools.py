@@ -28,10 +28,20 @@ def get_thread_id(runtime: ToolRuntime) -> str:
     from the tool runtime configuration.
     """
 
+    configurable = (
+        runtime.config.get(
+            "configurable",
+            {}
+        )
+    )
+
     thread_id = (
-        runtime.config
-        .get("configurable", {})
-        .get("thread_id")
+        configurable.get(
+            "conversation_thread_id"
+        )
+        or configurable.get(
+            "thread_id"
+        )
     )
 
     if not thread_id:
@@ -40,6 +50,33 @@ def get_thread_id(runtime: ToolRuntime) -> str:
         )
 
     return thread_id
+
+
+
+
+def get_user_id(
+    runtime: ToolRuntime,
+) -> int:
+    """
+    Get the current authenticated user_id
+    from the tool runtime configuration.
+    """
+
+    user_id = (
+        runtime.config
+        .get("configurable", {})
+        .get("user_id")
+    )
+
+    if user_id is None:
+        raise ValueError(
+            "user_id is missing from LangGraph runtime config."
+        )
+
+    return user_id
+
+
+
 
 if settings.tavily_api_key is not None:
     os.environ.setdefault(
@@ -304,6 +341,9 @@ def _safe_eval_node(node):
         f"{type(node).__name__}"
     )
 
+
+
+
 def safe_calculate(
     expression: str
 ):
@@ -362,6 +402,7 @@ def safe_calculate(
         )
 
     return result
+
 
 
 @tool
@@ -439,6 +480,7 @@ def normalize_stock_symbol(
 
     return symbol
     
+
 
 @tool
 def get_stock_price(symbol: str) -> dict:
@@ -594,6 +636,7 @@ def get_stock_price(symbol: str) -> dict:
                 "complete the request."
             ),
         }
+
 
 
 @tool
@@ -860,6 +903,10 @@ def remember_this(
             runtime
         )
 
+        user_id = get_user_id(
+            runtime
+        )
+
         memory = memory.strip()
 
         if not memory:
@@ -873,7 +920,8 @@ def remember_this(
 
         return save_memory(
             thread_id=thread_id,
-            memory=memory
+            memory=memory,
+            user_id=user_id,
         )
 
     except Exception:
@@ -905,6 +953,10 @@ def recall_memory(
             runtime
         )
 
+        user_id = get_user_id(
+            runtime
+        )
+
         query = query.strip()
 
         if not query:
@@ -919,7 +971,8 @@ def recall_memory(
 
         return search_memory(
             thread_id=thread_id,
-            query=query
+            query=query,
+            user_id=user_id,
         )
 
     except Exception:

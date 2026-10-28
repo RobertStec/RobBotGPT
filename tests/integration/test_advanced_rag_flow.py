@@ -9,6 +9,9 @@ import nodes
 
 
 
+USER_ID = 101
+
+
 
 
 def test_advanced_rag_flow_routes_relevant_context_to_generate(
@@ -87,7 +90,6 @@ def test_advanced_rag_flow_routes_relevant_context_to_generate(
             "chunk_index": 3,
         }
     ]
-
 
 
 
@@ -218,7 +220,13 @@ def test_advanced_rag_flow_uses_rewritten_query_for_retrieval(
         state=state,
         config={
             "configurable": {
-                "thread_id": "thread-123"
+                "thread_id": (
+                    "user:101:thread:thread-123"
+                ),
+                "conversation_thread_id": (
+                    "thread-123"
+                ),
+                "user_id": USER_ID,
             }
         },
         writer=writer,
@@ -230,6 +238,7 @@ def test_advanced_rag_flow_uses_rewritten_query_for_retrieval(
             "Atlas podano w dokumencie?"
         ),
         thread_id="thread-123",
+        user_id=USER_ID,
         k=nodes.settings.rag_retrieval_top_k,
     )
 
@@ -241,7 +250,7 @@ def test_advanced_rag_flow_uses_rewritten_query_for_retrieval(
 def test_advanced_rag_flow_handles_empty_retrieval(
     mocker,
 ):
-    mocker.patch(
+    mock_retrieve = mocker.patch(
         "nodes.retrieve_candidates_from_rag",
         return_value=[],
     )
@@ -266,10 +275,23 @@ def test_advanced_rag_flow_handles_empty_retrieval(
         state=state,
         config={
             "configurable": {
-                "thread_id": "thread-empty"
+                "thread_id": (
+                    "user:101:thread:thread-empty"
+                ),
+                "conversation_thread_id": (
+                    "thread-empty"
+                ),
+                "user_id": USER_ID,
             }
         },
         writer=writer,
+    )
+
+    mock_retrieve.assert_called_once_with(
+        query="Projekt Orion",
+        thread_id="thread-empty",
+        user_id=USER_ID,
+        k=nodes.settings.rag_retrieval_top_k,
     )
 
     assert retrieve_result == {

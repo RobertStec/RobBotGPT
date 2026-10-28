@@ -39,6 +39,37 @@ def chat_router_module(
     )
 
 
+
+PASSWORD = "StrongPassword123!"
+
+
+def _register_and_login(
+    api_client,
+    email: str,
+):
+    register_response = api_client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    login_response = api_client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert login_response.status_code == 200
+
+    return login_response.json()["user"]
+
+
 # =========================================================
 # SSE helper
 # =========================================================
@@ -210,6 +241,12 @@ def test_hitl_interrupt_and_resume(
     approved,
     expected_status,
 ):
+
+    user = _register_and_login(
+        api_client,
+        f"hitl-{approved}@example.com",
+    )
+
     mocker.patch.object(
         chat_router_module,
         "get_agent",
@@ -307,7 +344,8 @@ def test_hitl_interrupt_and_resume(
 
     history_before_resume = (
         database.get_chat_history(
-            thread_id
+            thread_id,
+            user_id=user["id"]
         )
     )
 
@@ -380,7 +418,8 @@ def test_hitl_interrupt_and_resume(
 
     history_after_resume = (
         database.get_chat_history(
-            thread_id
+            thread_id,
+            user_id=user["id"]
         )
     )
 
@@ -419,6 +458,12 @@ def test_hitl_resume_requires_same_thread_id(
     hitl_agent,
     mocker,
 ):
+
+    _register_and_login(
+        api_client,
+        "hitl-same-user@example.com",
+    )
+
     mocker.patch.object(
         chat_router_module,
         "get_agent",
@@ -469,19 +514,89 @@ def test_hitl_resume_requires_same_thread_id(
 
     assert (
         wrong_resume.status_code
-        == 200
+        == 404
     )
 
-    events = parse_sse_events(
-        wrong_resume
+    assert (
+        wrong_resume.json()["error_code"]
+        == "conversation_not_found"
+    )
+
+
+
+
+def test_hitl_resume_rejects_another_user(
+    api_client,
+    chat_router_module,
+    hitl_agent,
+    mocker,
+):
+    mock_get_agent = mocker.patch.object(
+        chat_router_module,
+        "get_agent",
+        return_value=hitl_agent,
+    )
+
+    owner = _register_and_login(
+        api_client,
+        "hitl-owner@example.com",
+    )
+
+    thread_id = "private-hitl-thread"
+
+    first_response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Buy 5 shares of AAPL",
+            "thread_id": thread_id,
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    first_events = parse_sse_events(
+        first_response
     )
 
     assert any(
-        event["type"] == "error"
-        for event in events
+        event["type"] == "interrupt"
+        for event in first_events
     )
 
-    assert events[-1] == {
-        "type": "done",
-        "done": True,
-    }
+    history = database.get_chat_history(
+        thread_id,
+        user_id=owner["id"],
+    )
+
+    assert len(history) == 1
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    _register_and_login(
+        api_client,
+        "hitl-attacker@example.com",
+    )
+
+    resume_response = api_client.post(
+        "/chat/stream",
+        json={
+            "thread_id": thread_id,
+            "model": "gpt-4o-mini",
+            "resume": True,
+        },
+    )
+
+    assert resume_response.status_code == 404
+
+    assert (
+        resume_response.json()["error_code"]
+        == "conversation_not_found"
+    )
+
+    # Only the owner's initial request reached
+    # the graph. Foreign resume was blocked
+    # before get_agent().
+    assert mock_get_agent.call_count == 1

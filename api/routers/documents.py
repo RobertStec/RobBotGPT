@@ -1,14 +1,20 @@
 from fastapi import (
     APIRouter,
+    Depends,
     File,
     Form,
     UploadFile,
 )
 from fastapi.responses import JSONResponse
 
+from api.dependencies.auth import (
+    get_current_user,
+)
+
 from core.exceptions import (
     DocumentProcessingError,
 )
+
 from services.document_service import (
     process_uploaded_document,
 )
@@ -21,6 +27,9 @@ router = APIRouter()
 async def upload_document(
     file: UploadFile = File(...),
     thread_id: str = Form(...),
+    current_user=Depends(
+        get_current_user
+    ),
 ):
     filename = (
         file.filename
@@ -39,6 +48,7 @@ async def upload_document(
         filename=filename,
         content=content,
         thread_id=thread_id,
+        user_id=current_user.id,
     )
 
     return JSONResponse({

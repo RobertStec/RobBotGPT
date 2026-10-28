@@ -7,6 +7,7 @@ from langchain_core.messages import (
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
+
 from nodes import (
     generate_rag_node,
     no_answer_node,
@@ -14,6 +15,10 @@ from nodes import (
     retrieve_node,
     rewrite_query_node,
     route_after_rerank,
+)
+
+from evals.seed_corpus import (
+    get_eval_user,
 )
 
 
@@ -25,7 +30,6 @@ def _noop_writer(_event: dict) -> None:
     """
     Ignore streaming events during evaluation.
     """
-
 
 
 
@@ -93,6 +97,8 @@ def build_rag_eval_target(
             "thread_id cannot be empty."
         )
 
+    user = get_eval_user()
+
     if llm is None:
         llm = ChatOpenAI(
             model=settings.openai_model,
@@ -134,6 +140,10 @@ def build_rag_eval_target(
             config={
                 "configurable": {
                     "thread_id": thread_id,
+                    "conversation_thread_id": (
+                        thread_id
+                    ),
+                    "user_id": user.id,
                 }
             },
             writer=_noop_writer,

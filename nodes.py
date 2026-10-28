@@ -261,15 +261,36 @@ def retrieve_node(
         )
     )
 
+    configurable = (
+        config.get(
+            "configurable",
+            {}
+        )
+    )
+
     thread_id = (
-        config
-        .get("configurable", {})
-        .get("thread_id")
+        configurable.get(
+            "conversation_thread_id"
+        )
+        or configurable.get(
+            "thread_id"
+        )
     )
 
     if not thread_id:
         raise ValueError(
             "thread_id is missing from LangGraph config."
+        )
+
+    user_id = (
+        config
+        .get("configurable", {})
+        .get("user_id")
+    )
+
+    if user_id is None:
+        raise ValueError(
+            "user_id is missing from LangGraph config."
         )
 
     # -----------------------------------------
@@ -282,13 +303,18 @@ def retrieve_node(
     })
 
     logger.info(
-        "RAG retrieval started thread_id=%s",
+        (
+            "RAG retrieval started "
+            "user_id=%s thread_id=%s"
+        ),
+        user_id,
         thread_id,
     )
 
     candidates = retrieve_candidates_from_rag(
         query=query,
         thread_id=thread_id,
+        user_id=user_id,
         k=settings.rag_retrieval_top_k,
     )
 

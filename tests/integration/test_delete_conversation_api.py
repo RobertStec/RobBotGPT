@@ -2,6 +2,107 @@ import database
 import services.conversation_service as conversation_service
 
 
+PASSWORD = "StrongPassword123!"
+
+
+
+def test_delete_conversation_requires_authentication(
+    api_client,
+):
+    response = api_client.delete(
+        "/conversations/thread-001"
+    )
+
+    assert response.status_code == 401
+
+    assert response.json()["error_code"] == (
+        "authentication_required"
+    )
+
+
+def test_delete_conversation_of_another_user_returns_404(
+    api_client,
+    mocker,
+):
+    owner = _register_and_login(
+        api_client,
+        "delete-owner@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="private-delete",
+        first_message="Private conversation",
+        user_id=owner["id"],
+    )
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    _register_and_login(
+        api_client,
+        "delete-other@example.com",
+    )
+
+    mock_delete_rag = mocker.patch.object(
+        conversation_service,
+        "delete_thread_documents",
+    )
+
+    mock_delete_checkpoints = mocker.patch.object(
+        conversation_service,
+        "delete_thread_checkpoints",
+    )
+
+    response = api_client.delete(
+        "/conversations/private-delete"
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["error_code"] == (
+        "conversation_not_found"
+    )
+
+    mock_delete_rag.assert_not_called()
+    mock_delete_checkpoints.assert_not_called()
+
+    assert database.conversation_exists(
+        "private-delete",
+        user_id=owner["id"],
+    ) is True
+
+
+
+def _register_and_login(
+    api_client,
+    email: str,
+):
+    register_response = api_client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    login_response = api_client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert login_response.status_code == 200
+
+    return login_response.json()["user"]
+
+
+
+
 def test_delete_conversation_removes_database_data_and_calls_dependencies(
     api_client,
     mocker,
@@ -10,20 +111,28 @@ def test_delete_conversation_removes_database_data_and_calls_dependencies(
     # Prepare conversation data
     # -----------------------------------------
 
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     database.create_or_update_conversation(
         thread_id="thread-delete",
         first_message="Conversation to delete",
+        user_id=user["id"],
     )
 
     database.save_chat_message(
         thread_id="thread-delete",
         role="user",
         content="Hello",
+        user_id=user["id"],
     )
 
     database.save_memory(
         thread_id="thread-delete",
         memory="Test memory",
+        user_id=user["id"],
     )
 
     # -----------------------------------------
@@ -70,11 +179,13 @@ def test_delete_conversation_removes_database_data_and_calls_dependencies(
     # -----------------------------------------
 
     mock_delete_rag.assert_called_once_with(
-        "thread-delete"
+        "thread-delete",
+        user_id=user["id"],
     )
 
     mock_delete_checkpoints.assert_called_once_with(
-        "thread-delete"
+        "thread-delete",
+        user_id=user["id"],
     )
 
     # -----------------------------------------
@@ -83,7 +194,8 @@ def test_delete_conversation_removes_database_data_and_calls_dependencies(
 
     assert (
         database.get_chat_history(
-            "thread-delete"
+            "thread-delete",
+            user_id=user["id"],
         )
         == []
     )
@@ -92,14 +204,16 @@ def test_delete_conversation_removes_database_data_and_calls_dependencies(
         database.search_memory(
             "thread-delete",
             "anything",
+            user_id=user["id"],
         )
         == "No saved memory found."
     )
 
     conversations = (
-        database.list_conversations()
+        database.list_conversations(
+            user_id=user["id"]
+        )
     )
-
     assert all(
         conversation.thread_id
         != "thread-delete"
@@ -115,6 +229,12 @@ def test_delete_unknown_conversation_returns_404(
     api_client,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     mock_delete_rag = mocker.patch.object(
         conversation_service,
         "delete_thread_documents",
@@ -156,9 +276,16 @@ def test_delete_conversation_returns_500_when_rag_cleanup_fails(
     api_client,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     database.create_or_update_conversation(
         thread_id="thread-error",
         first_message="Keep me",
+        user_id=user["id"],
     )
 
     mocker.patch.object(
@@ -199,7 +326,9 @@ def test_delete_conversation_returns_500_when_rag_cleanup_fails(
     mock_delete_checkpoints.assert_not_called()
 
     conversations = (
-        database.list_conversations()
+        database.list_conversations(
+            user_id=user["id"]
+        )
     )
 
     assert any(
@@ -217,9 +346,16 @@ def test_delete_conversation_keeps_database_when_checkpoint_cleanup_fails(
     api_client,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     database.create_or_update_conversation(
         thread_id="thread-checkpoint-error",
         first_message="Keep me",
+        user_id=user["id"],
     )
 
     mock_delete_rag = mocker.patch.object(
@@ -263,11 +399,13 @@ def test_delete_conversation_keeps_database_when_checkpoint_cleanup_fails(
     )
 
     mock_delete_rag.assert_called_once_with(
-        "thread-checkpoint-error"
+        "thread-checkpoint-error",
+        user_id=user["id"],
     )
 
     assert database.conversation_exists(
-        "thread-checkpoint-error"
+        "thread-checkpoint-error",
+        user_id=user["id"],
     )
 
 
@@ -279,11 +417,18 @@ def test_delete_conversation_keeps_database_when_final_database_delete_fails(
     api_client,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     thread_id = "thread-db-delete-error"
 
     database.create_or_update_conversation(
         thread_id=thread_id,
         first_message="Keep me",
+        user_id=user["id"],
     )
 
     mock_delete_rag = mocker.patch.object(
@@ -333,15 +478,18 @@ def test_delete_conversation_keeps_database_when_final_database_delete_fails(
     )
 
     mock_delete_rag.assert_called_once_with(
-        thread_id
+        thread_id,
+        user_id=user["id"],
     )
 
     mock_delete_checkpoints.assert_called_once_with(
-        thread_id
+        thread_id,
+        user_id=user["id"],
     )
 
     assert database.conversation_exists(
-        thread_id
+        thread_id,
+        user_id=user["id"],
     )
 
 
@@ -353,11 +501,17 @@ def test_delete_conversation_can_be_retried_after_partial_failure(
     api_client,
     mocker,
 ):
+    user = _register_and_login(
+        api_client,
+        "delete@example.com",
+    )
+
     thread_id = "thread-retry"
 
     database.create_or_update_conversation(
         thread_id=thread_id,
         first_message="Retry me",
+        user_id=user["id"],
     )
 
     mock_delete_rag = mocker.patch.object(
@@ -395,7 +549,8 @@ def test_delete_conversation_can_be_retried_after_partial_failure(
     assert first_response.status_code == 500
 
     assert database.conversation_exists(
-        thread_id
+        thread_id,
+        user_id=user["id"],
     )
 
     second_response = api_client.delete(
@@ -413,7 +568,8 @@ def test_delete_conversation_can_be_retried_after_partial_failure(
 
     assert (
         database.conversation_exists(
-            thread_id
+            thread_id,
+            user_id=user["id"],
         )
         is False
     )

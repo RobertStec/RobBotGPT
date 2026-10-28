@@ -347,7 +347,8 @@ def test_retrieve_node_returns_candidates(
 
     config = {
         "configurable": {
-            "thread_id": "thread-123"
+            "thread_id": "thread-123",
+            "user_id": 101,
         }
     }
 
@@ -394,6 +395,7 @@ def test_retrieve_node_returns_candidates(
     mock_retrieve.assert_called_once_with(
         query="What does the document say?",
         thread_id="thread-123",
+        user_id=101,
         k=settings.rag_retrieval_top_k,
     )
 
@@ -448,7 +450,8 @@ def test_retrieve_node_uses_rewritten_query(
 
     config = {
         "configurable": {
-            "thread_id": "thread-123"
+            "thread_id": "thread-123",
+            "user_id": 101,
         }
     }
 
@@ -464,6 +467,7 @@ def test_retrieve_node_uses_rewritten_query(
             "Atlas podano w dokumencie?"
         ),
         thread_id="thread-123",
+        user_id=101,
         k=settings.rag_retrieval_top_k,
     )
 
@@ -507,6 +511,90 @@ def test_retrieve_node_raises_error_when_thread_id_missing(
 
     mock_retrieve.assert_not_called()
     writer.assert_not_called()
+
+
+
+
+def test_retrieve_node_raises_error_when_user_id_missing(
+    mocker,
+):
+    state = {
+        "messages": [
+            HumanMessage(
+                content="Check the document."
+            )
+        ]
+    }
+
+    config = {
+        "configurable": {
+            "thread_id": "thread-123"
+        }
+    }
+
+    writer = mocker.Mock()
+
+    mock_retrieve = mocker.patch(
+        "nodes.retrieve_candidates_from_rag"
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="user_id is missing",
+    ):
+        retrieve_node(
+            state=state,
+            config=config,
+            writer=writer,
+        )
+
+    mock_retrieve.assert_not_called()
+    writer.assert_not_called()
+
+
+
+def test_retrieve_node_uses_conversation_thread_id(
+    mocker,
+):
+    state = {
+        "messages": [
+            HumanMessage(
+                content="Check the document."
+            )
+        ]
+    }
+
+    config = {
+        "configurable": {
+            "thread_id": (
+                "user:42:thread:thread-123"
+            ),
+            "conversation_thread_id": (
+                "thread-123"
+            ),
+            "user_id": 42,
+        }
+    }
+
+    writer = mocker.Mock()
+
+    mock_retrieve = mocker.patch(
+        "nodes.retrieve_candidates_from_rag",
+        return_value=[],
+    )
+
+    retrieve_node(
+        state=state,
+        config=config,
+        writer=writer,
+    )
+
+    mock_retrieve.assert_called_once_with(
+        query="Check the document.",
+        thread_id="thread-123",
+        user_id=42,
+        k=settings.rag_retrieval_top_k,
+    )
 
 
 # =========================================================

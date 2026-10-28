@@ -12,6 +12,7 @@ from tools import (
     get_current_weather,
     get_stock_price,
     get_thread_id,
+    get_user_id,
     normalize_stock_symbol,
     purchase_stock,
     recall_memory,
@@ -22,11 +23,17 @@ from tools import (
 
 # Helper tworzący testowy runtime
 
-def make_runtime(thread_id: str | None = "thread-123"):
+def make_runtime(
+    thread_id: str | None = "thread-123",
+    user_id: int | None = 101,
+):
     configurable = {}
 
     if thread_id is not None:
         configurable["thread_id"] = thread_id
+
+    if user_id is not None:
+        configurable["user_id"] = user_id
 
     return SimpleNamespace(
         config={
@@ -50,6 +57,8 @@ def make_runtime(thread_id: str | None = "thread-123"):
         ("2 ** 8", 256),
     ],
 )
+
+
 def test_safe_calculate_basic_operations(expression, expected):
     assert safe_calculate(expression) == expected
 
@@ -66,6 +75,8 @@ def test_safe_calculate_basic_operations(expression, expected):
         ("round(math.pi, 3)", round(math.pi, 3)),
     ],
 )
+
+
 def test_safe_calculate_allowed_functions(expression, expected):
     assert safe_calculate(expression) == expected
 
@@ -81,9 +92,12 @@ def test_safe_calculate_allowed_functions(expression, expected):
         "abc",
     ],
 )
+
+
 def test_safe_calculate_rejects_unsafe_expressions(expression):
     with pytest.raises(ValueError):
         safe_calculate(expression)
+
 
 
 def test_safe_calculate_rejects_division_by_zero():
@@ -91,9 +105,11 @@ def test_safe_calculate_rejects_division_by_zero():
         safe_calculate("10 / 0")
 
 
+
 def test_safe_calculate_rejects_too_large_exponent():
     with pytest.raises(ValueError, match="Exponent is too large"):
         safe_calculate("2 ** 1001")
+
 
 
 def test_safe_calculate_rejects_too_long_expression():
@@ -116,6 +132,7 @@ def test_safe_calculate_rejects_too_long_expression():
         ("BTC-USD", "BTC-USD"),
     ],
 )
+
 def test_normalize_stock_symbol_valid(symbol, expected):
     assert normalize_stock_symbol(symbol) == expected
 
@@ -130,6 +147,7 @@ def test_normalize_stock_symbol_valid(symbol, expected):
         "THIS_SYMBOL_IS_WAY_TOO_LONG",
     ],
 )
+
 def test_normalize_stock_symbol_invalid(symbol):
     with pytest.raises(ValueError):
         normalize_stock_symbol(symbol)
@@ -147,6 +165,7 @@ def test_calculator_tool_returns_result_as_string():
     assert result == "1000.0"
 
 
+
 def test_calculator_tool_handles_invalid_expression():
     result = calculator.invoke({
         "expression": "10 / 0"
@@ -154,6 +173,7 @@ def test_calculator_tool_handles_invalid_expression():
 
     assert result.startswith("Calculation error:")
     assert "division by zero" in result.lower()
+
 
 
 def test_calculator_tool_rejects_unsafe_expression():
@@ -416,6 +436,7 @@ def test_get_thread_id_returns_thread_id():
     assert result == "test-thread-001"
 
 
+
 def test_get_thread_id_raises_error_when_thread_id_missing():
     runtime = make_runtime(
         thread_id=None
@@ -429,13 +450,40 @@ def test_get_thread_id_raises_error_when_thread_id_missing():
 
 
 
+
+# Testujemy get_user_id()
+
+def test_get_user_id_returns_user_id():
+    runtime = make_runtime(
+        user_id=456
+    )
+
+    result = get_user_id(runtime)
+
+    assert result == 456
+
+
+def test_get_user_id_raises_error_when_user_id_missing():
+    runtime = make_runtime(
+        user_id=None
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="user_id is missing",
+    ):
+        get_user_id(runtime)
+
+
+
 # Testujemy remember_this
 
 def test_remember_this_saves_memory(
     mocker,
 ):
     runtime = make_runtime(
-        thread_id="thread-memory-001"
+        thread_id="thread-memory-001",
+        user_id=101,
     )
 
     mock_save_memory = mocker.patch(
@@ -453,6 +501,7 @@ def test_remember_this_saves_memory(
     mock_save_memory.assert_called_once_with(
         thread_id="thread-memory-001",
         memory="I prefer Python.",
+        user_id=101,
     )
 
 
@@ -505,7 +554,8 @@ def test_recall_memory_searches_memory(
 mocker,
 ):
     runtime = make_runtime(
-        thread_id="thread-memory-002"
+        thread_id="thread-memory-002",
+        user_id=202,
     )
 
     mock_search_memory = mocker.patch(
@@ -523,6 +573,7 @@ mocker,
     mock_search_memory.assert_called_once_with(
         thread_id="thread-memory-002",
         query="programming preferences",
+        user_id=202,
     )
 
 
@@ -565,6 +616,60 @@ def test_recall_memory_rejects_too_long_query(
     )
 
     assert result == "Memory query is too long."
+
+    mock_search_memory.assert_not_called()
+
+
+
+
+def test_remember_this_handles_missing_user_id(
+    mocker,
+):
+    runtime = make_runtime(
+        thread_id="thread-memory",
+        user_id=None,
+    )
+
+    mock_save_memory = mocker.patch(
+        "tools.save_memory"
+    )
+
+    result = remember_this.func(
+        memory="Remember this",
+        runtime=runtime,
+    )
+
+    assert result == (
+        "The memory tool could not "
+        "save the information."
+    )
+
+    mock_save_memory.assert_not_called()
+
+
+
+
+def test_recall_memory_handles_missing_user_id(
+    mocker,
+):
+    runtime = make_runtime(
+        thread_id="thread-memory",
+        user_id=None,
+    )
+
+    mock_search_memory = mocker.patch(
+        "tools.search_memory"
+    )
+
+    result = recall_memory.func(
+        query="preferences",
+        runtime=runtime,
+    )
+
+    assert result == (
+        "The memory tool could not "
+        "retrieve the information."
+    )
 
     mock_search_memory.assert_not_called()
 
@@ -1091,3 +1196,26 @@ def test_recall_memory_handles_database_error(
         "The memory tool could not "
         "retrieve the information."
     )
+
+
+
+def test_get_thread_id_prefers_conversation_thread_id():
+    runtime = SimpleNamespace(
+        config={
+            "configurable": {
+                "thread_id": (
+                    "user:42:thread:thread-123"
+                ),
+                "conversation_thread_id": (
+                    "thread-123"
+                ),
+                "user_id": 42,
+            }
+        }
+    )
+
+    result = get_thread_id(
+        runtime
+    )
+
+    assert result == "thread-123"

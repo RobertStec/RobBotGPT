@@ -10,6 +10,8 @@ from core.exceptions import (
 )
 
 
+USER_ID = 101
+
 
 # Test listy
 
@@ -31,7 +33,7 @@ def test_list_conversation_summaries(
         updated_at=updated_at,
     )
 
-    mocker.patch.object(
+    mock_list = mocker.patch.object(
         conversation_service,
         "list_conversations",
         return_value=[item],
@@ -39,7 +41,13 @@ def test_list_conversation_summaries(
 
     result = (
         conversation_service
-        .list_conversation_summaries()
+        .list_conversation_summaries(
+            user_id=USER_ID
+        )
+    )
+
+    mock_list.assert_called_once_with(
+        user_id=USER_ID
     )
 
     assert result == [
@@ -70,7 +78,13 @@ def test_get_conversation_history(
         ),
     )
 
-    mocker.patch.object(
+    mock_exists = mocker.patch.object(
+        conversation_service,
+        "conversation_exists",
+        return_value=True,
+    )
+
+    mock_history = mocker.patch.object(
         conversation_service,
         "get_chat_history",
         return_value=[message],
@@ -79,8 +93,19 @@ def test_get_conversation_history(
     result = (
         conversation_service
         .get_conversation_history(
-            "thread-1"
+            "thread-1",
+            user_id=USER_ID,
         )
+    )
+
+    mock_exists.assert_called_once_with(
+        "thread-1",
+        user_id=USER_ID,
+    )
+
+    mock_history.assert_called_once_with(
+        "thread-1",
+        user_id=USER_ID,
     )
 
     assert result == [
@@ -133,7 +158,8 @@ def test_delete_conversation_resources_success(
     result = (
         conversation_service
         .delete_conversation_resources(
-            "thread-1"
+            "thread-1",
+            user_id=USER_ID,
         )
     )
 
@@ -146,15 +172,18 @@ def test_delete_conversation_resources_success(
     }
 
     mock_rag.assert_called_once_with(
-        "thread-1"
+        "thread-1",
+        user_id=USER_ID,
     )
 
     mock_checkpoints.assert_called_once_with(
-        "thread-1"
+        "thread-1",
+        user_id=USER_ID,
     )
 
     mock_db.assert_called_once_with(
-        "thread-1"
+        "thread-1",
+        user_id=USER_ID,
     )
 
 
@@ -193,7 +222,8 @@ def test_delete_unknown_conversation_stops_before_cleanup(
     ):
         conversation_service \
             .delete_conversation_resources(
-                "unknown-thread"
+                "unknown-thread",
+                user_id=USER_ID,
             )
 
     mock_rag.assert_not_called()
@@ -239,7 +269,8 @@ def test_delete_conversation_stops_when_rag_cleanup_fails(
     ):
         conversation_service \
             .delete_conversation_resources(
-                "thread-1"
+                "thread-1",
+                user_id=USER_ID,
             )
 
     mock_checkpoints.assert_not_called()
@@ -286,7 +317,8 @@ def test_delete_conversation_keeps_db_when_checkpoint_cleanup_fails(
     ):
         conversation_service \
             .delete_conversation_resources(
-                "thread-1"
+                "thread-1",
+                user_id=USER_ID,
             )
 
     mock_db.assert_not_called()
