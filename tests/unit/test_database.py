@@ -5,12 +5,18 @@ from datetime import (
 
 import database
 
+import pytest
+
+from sqlalchemy.exc import IntegrityError
+
 from database import (
     AuthSession,
     ChatMessage,
     Conversation,
     LongTermMemory,
     User,
+    RagDocument,
+    conversation_exists,
     create_auth_session,
     create_or_update_conversation,
     create_user,
@@ -26,15 +32,36 @@ from database import (
     search_memory,
 )
 
-# Tworzenie konwersacji
+
+
+# =========================================================
+# Conversation ownership
+# =========================================================
+
+
+def _create_test_user(
+    email: str,
+):
+    return create_user(
+        email=email,
+        password_hash="test-hash",
+    )
+
 
 def test_create_conversation(
     test_database,
 ):
-    create_or_update_conversation(
+    user = _create_test_user(
+        "owner@example.com"
+    )
+
+    result = create_or_update_conversation(
         thread_id="thread-001",
         first_message="Hello RobBotGPT",
+        user_id=user.id,
     )
+
+    assert result is True
 
     db = test_database()
 
@@ -49,6 +76,7 @@ def test_create_conversation(
         )
 
         assert conversation is not None
+        assert conversation.user_id == user.id
         assert conversation.thread_id == "thread-001"
         assert conversation.title == "Hello RobBotGPT"
 
@@ -56,41 +84,53 @@ def test_create_conversation(
         db.close()
 
 
-
-# Test skracania tytułu
-
 def test_create_conversation_truncates_long_title(
     test_database,
 ):
+    user = _create_test_user(
+        "title@example.com"
+    )
+
     long_message = "A" * 60
 
     create_or_update_conversation(
         thread_id="thread-long-title",
         first_message=long_message,
+        user_id=user.id,
     )
 
-    conversations = list_conversations()
+    conversations = list_conversations(
+        user_id=user.id
+    )
 
     assert len(conversations) == 1
+
     assert conversations[0].title == (
         "A" * 40 + "..."
     )
 
 
-# Ponowne wywołanie nie tworzy duplikatu
-
 def test_create_or_update_conversation_does_not_duplicate(
     test_database,
 ):
-    create_or_update_conversation(
-        "thread-001",
-        "First message",
+    user = _create_test_user(
+        "duplicate@example.com"
     )
 
-    create_or_update_conversation(
-        "thread-001",
-        "Different message",
+    first_result = create_or_update_conversation(
+        thread_id="thread-001",
+        first_message="First message",
+        user_id=user.id,
     )
+
+    second_result = create_or_update_conversation(
+        thread_id="thread-001",
+        first_message="Different message",
+        user_id=user.id,
+    )
+
+    assert first_result is True
+    assert second_result is True
 
     db = test_database()
 
@@ -110,59 +150,267 @@ def test_create_or_update_conversation_does_not_duplicate(
         db.close()
 
 
+def test_conversation_cannot_be_claimed_by_another_user(
+    test_database,
+):
+    owner = _create_test_user(
+        "owner@example.com"
+    )
+
+    other_user = _create_test_user(
+        "other@example.com"
+    )
+
+    first_result = create_or_update_conversation(
+        thread_id="shared-thread",
+        first_message="Owner conversation",
+        user_id=owner.id,
+    )
+
+    second_result = create_or_update_conversation(
+        thread_id="shared-thread",
+        first_message="Attempted takeover",
+        user_id=other_user.id,
+    )
+
+    assert first_result is True
+    assert second_result is False
+
+    db = test_database()
+
+    try:
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.thread_id
+                == "shared-thread"
+            )
+            .first()
+        )
+
+        assert conversation is not None
+        assert conversation.user_id == owner.id
+        assert conversation.title == "Owner conversation"
+
+    finally:
+        db.close()
 
 
-# Zapis wiadomości
+@pytest.mark.parametrize(
+    (
+        "model_class",
+        "kwargs",
+    ),
+    [
+        (
+            Conversation,
+            {
+                "thread_id": "legacy-conversation",
+                "title": "Legacy",
+            },
+        ),
+        (
+            ChatMessage,
+            {
+                "thread_id": "legacy-message",
+                "role": "user",
+                "content": "Legacy message",
+            },
+        ),
+        (
+            LongTermMemory,
+            {
+                "thread_id": "legacy-memory",
+                "memory": "Legacy memory",
+            },
+        ),
+        (
+            RagDocument,
+            {
+                "thread_id": "legacy-rag",
+                "source_name": "legacy.pdf",
+                "stored_name": "legacy.txt",
+            },
+        ),
+    ],
+)
+
+
+def test_user_owned_records_require_user_id(
+    test_database,
+    model_class,
+    kwargs,
+):
+    db = test_database()
+
+    try:
+        record = model_class(
+            user_id=None,
+            **kwargs,
+        )
+
+        db.add(record)
+
+        with pytest.raises(
+            IntegrityError
+        ):
+            db.commit()
+
+        db.rollback()
+
+    finally:
+        db.close()
+
+
+
+def test_list_conversations_is_isolated_by_user(
+    test_database,
+):
+    user_a = _create_test_user(
+        "user-a@example.com"
+    )
+
+    user_b = _create_test_user(
+        "user-b@example.com"
+    )
+
+    create_or_update_conversation(
+        thread_id="thread-A",
+        first_message="Conversation A",
+        user_id=user_a.id,
+    )
+
+    create_or_update_conversation(
+        thread_id="thread-B",
+        first_message="Conversation B",
+        user_id=user_b.id,
+    )
+
+    conversations_a = list_conversations(
+        user_id=user_a.id
+    )
+
+    conversations_b = list_conversations(
+        user_id=user_b.id
+    )
+
+    assert [
+        item.thread_id
+        for item in conversations_a
+    ] == [
+        "thread-A"
+    ]
+
+    assert [
+        item.thread_id
+        for item in conversations_b
+    ] == [
+        "thread-B"
+    ]
+
+
+# =========================================================
+# Chat messages
+# =========================================================
+
 
 def test_save_chat_message(
     test_database,
 ):
-    create_or_update_conversation(
-        "thread-001",
-        "Hello",
+    user = _create_test_user(
+        "chat@example.com"
     )
 
-    save_chat_message(
+    create_or_update_conversation(
+        thread_id="thread-001",
+        first_message="Hello",
+        user_id=user.id,
+    )
+
+    result = save_chat_message(
         thread_id="thread-001",
         role="user",
         content="Hello RobBotGPT",
+        user_id=user.id,
     )
 
+    assert result is True
+
     history = get_chat_history(
-        "thread-001"
+        "thread-001",
+        user_id=user.id,
     )
 
     assert len(history) == 1
-
+    assert history[0].user_id == user.id
     assert history[0].role == "user"
     assert history[0].content == "Hello RobBotGPT"
 
 
+def test_save_chat_message_rejects_foreign_conversation(
+    test_database,
+):
+    owner = _create_test_user(
+        "message-owner@example.com"
+    )
 
-# Historia zachowuje kolejność
+    other_user = _create_test_user(
+        "message-other@example.com"
+    )
+
+    create_or_update_conversation(
+        thread_id="owner-thread",
+        first_message="Owner",
+        user_id=owner.id,
+    )
+
+    result = save_chat_message(
+        thread_id="owner-thread",
+        role="user",
+        content="Unauthorized message",
+        user_id=other_user.id,
+    )
+
+    assert result is False
+
+    owner_history = get_chat_history(
+        "owner-thread",
+        user_id=owner.id,
+    )
+
+    assert owner_history == []
+
 
 def test_get_chat_history_returns_messages_in_order(
     test_database,
 ):
+    user = _create_test_user(
+        "history@example.com"
+    )
+
     create_or_update_conversation(
-        "thread-001",
-        "Question",
+        thread_id="thread-001",
+        first_message="Question",
+        user_id=user.id,
     )
 
     save_chat_message(
         "thread-001",
         "user",
         "First message",
+        user_id=user.id,
     )
 
     save_chat_message(
         "thread-001",
         "assistant",
         "Second message",
+        user_id=user.id,
     )
 
     history = get_chat_history(
-        "thread-001"
+        "thread-001",
+        user_id=user.id,
     )
 
     assert [
@@ -174,15 +422,17 @@ def test_get_chat_history_returns_messages_in_order(
     ]
 
 
-
-# Źródła RAG zapisują się jako JSON
-
 def test_save_chat_message_serializes_sources(
     test_database,
 ):
+    user = _create_test_user(
+        "rag-message@example.com"
+    )
+
     create_or_update_conversation(
-        "thread-rag",
-        "Document question",
+        thread_id="thread-rag",
+        first_message="Document question",
+        user_id=user.id,
     )
 
     sources = [
@@ -198,72 +448,76 @@ def test_save_chat_message_serializes_sources(
         role="assistant",
         content="Document answer",
         sources=sources,
+        user_id=user.id,
     )
 
     history = get_chat_history(
-        "thread-rag"
+        "thread-rag",
+        user_id=user.id,
     )
 
     assert len(history) == 1
-
     assert history[0].sources is not None
     assert '"document.pdf"' in history[0].sources
     assert '"page": 3' in history[0].sources
 
 
-
-
-# Izolacja historii przez thread_id
-
-def test_chat_history_is_isolated_by_thread_id(
+def test_chat_history_is_isolated_by_user(
     test_database,
 ):
-    create_or_update_conversation(
-        "thread-A",
-        "Conversation A",
+    owner = _create_test_user(
+        "history-owner@example.com"
+    )
+
+    other_user = _create_test_user(
+        "history-other@example.com"
     )
 
     create_or_update_conversation(
-        "thread-B",
-        "Conversation B",
+        thread_id="private-thread",
+        first_message="Private conversation",
+        user_id=owner.id,
     )
 
     save_chat_message(
-        "thread-A",
-        "user",
-        "Message A",
+        thread_id="private-thread",
+        role="user",
+        content="Private message",
+        user_id=owner.id,
     )
 
-    save_chat_message(
-        "thread-B",
-        "user",
-        "Message B",
+    owner_history = get_chat_history(
+        "private-thread",
+        user_id=owner.id,
     )
 
-    history_a = get_chat_history(
-        "thread-A"
+    other_history = get_chat_history(
+        "private-thread",
+        user_id=other_user.id,
     )
 
-    history_b = get_chat_history(
-        "thread-B"
-    )
+    assert len(owner_history) == 1
+    assert owner_history[0].content == "Private message"
 
-    assert len(history_a) == 1
-    assert history_a[0].content == "Message A"
-
-    assert len(history_b) == 1
-    assert history_b[0].content == "Message B"
+    assert other_history == []
 
 
+# =========================================================
+# Long-term memory
+# =========================================================
 
-# Test save_memory
 
 def test_save_memory(
     test_database,
 ):
+    user = _create_test_user(
+        "memory@example.com"
+    )
+
     result = save_memory(
         thread_id="thread-memory",
         memory="I prefer Python.",
+        user_id=user.id,
     )
 
     assert result == "Memory saved successfully."
@@ -275,12 +529,15 @@ def test_save_memory(
             db.query(LongTermMemory)
             .filter(
                 LongTermMemory.thread_id
-                == "thread-memory"
+                == "thread-memory",
+                LongTermMemory.user_id
+                == user.id,
             )
             .first()
         )
 
         assert memory is not None
+        assert memory.user_id == user.id
         assert memory.memory == "I prefer Python."
 
     finally:
@@ -288,24 +545,29 @@ def test_save_memory(
 
 
 
-# Test search_memory
-
 def test_search_memory_returns_saved_memories(
     test_database,
 ):
+    user = _create_test_user(
+        "memory-search@example.com"
+    )
+
     save_memory(
         "thread-memory",
         "I prefer Python.",
+        user_id=user.id,
     )
 
     save_memory(
         "thread-memory",
         "I use LangGraph.",
+        user_id=user.id,
     )
 
     result = search_memory(
         thread_id="thread-memory",
         query="programming",
+        user_id=user.id,
     )
 
     assert "I prefer Python." in result
@@ -313,68 +575,99 @@ def test_search_memory_returns_saved_memories(
 
 
 
-# Izolacja pamięci
 
-def test_search_memory_is_isolated_by_thread_id(
+def test_search_memory_is_isolated_by_user(
     test_database,
 ):
-    save_memory(
-        "thread-A",
-        "Memory from A",
+    user_a = _create_test_user(
+        "memory-a@example.com"
+    )
+
+    user_b = _create_test_user(
+        "memory-b@example.com"
     )
 
     save_memory(
-        "thread-B",
-        "Memory from B",
+        thread_id="shared-memory-thread",
+        memory="Memory from A",
+        user_id=user_a.id,
+    )
+
+    save_memory(
+        thread_id="shared-memory-thread",
+        memory="Memory from B",
+        user_id=user_b.id,
     )
 
     result_a = search_memory(
-        "thread-A",
-        "anything",
+        thread_id="shared-memory-thread",
+        query="anything",
+        user_id=user_a.id,
+    )
+
+    result_b = search_memory(
+        thread_id="shared-memory-thread",
+        query="anything",
+        user_id=user_b.id,
     )
 
     assert "Memory from A" in result_a
     assert "Memory from B" not in result_a
 
+    assert "Memory from B" in result_b
+    assert "Memory from A" not in result_b
 
-
-# Brak zapisanej pamięci
 
 def test_search_memory_returns_message_when_empty(
     test_database,
 ):
+    user = _create_test_user(
+        "empty-memory@example.com"
+    )
+
     result = search_memory(
         "unknown-thread",
         "anything",
+        user_id=user.id,
     )
 
     assert result == "No saved memory found."
 
 
+# =========================================================
+# Conversation deletion
+# =========================================================
 
-# Usuwanie całej konwersacji
 
 def test_delete_conversation_removes_related_data(
     test_database,
 ):
+    user = _create_test_user(
+        "delete-owner@example.com"
+    )
+
     create_or_update_conversation(
-        "thread-delete",
-        "Delete me",
+        thread_id="thread-delete",
+        first_message="Delete me",
+        user_id=user.id,
     )
 
     save_chat_message(
         "thread-delete",
         "user",
         "Message",
+        user_id=user.id,
     )
 
     save_memory(
         "thread-delete",
         "Memory",
+        user_id=user.id,
     )
 
     result = delete_conversation(
-        "thread-delete"
+        "thread-delete",
+        user_id=user.id,
     )
 
     assert result is True
@@ -417,14 +710,61 @@ def test_delete_conversation_removes_related_data(
         db.close()
 
 
+def test_delete_conversation_rejects_foreign_user(
+    test_database,
+):
+    owner = _create_test_user(
+        "delete-owner@example.com"
+    )
 
-# Usunięcie nieistniejącej konwersacji
+    other_user = _create_test_user(
+        "delete-other@example.com"
+    )
+
+    create_or_update_conversation(
+        thread_id="private-delete-thread",
+        first_message="Private",
+        user_id=owner.id,
+    )
+
+    save_chat_message(
+        thread_id="private-delete-thread",
+        role="user",
+        content="Private message",
+        user_id=owner.id,
+    )
+
+    result = delete_conversation(
+        "private-delete-thread",
+        user_id=other_user.id,
+    )
+
+    assert result is False
+
+    assert conversation_exists(
+        "private-delete-thread",
+        user_id=owner.id,
+    ) is True
+
+    history = get_chat_history(
+        "private-delete-thread",
+        user_id=owner.id,
+    )
+
+    assert len(history) == 1
+    assert history[0].content == "Private message"
+
 
 def test_delete_conversation_returns_false_when_not_found(
     test_database,
 ):
+    user = _create_test_user(
+        "delete-missing@example.com"
+    )
+
     result = delete_conversation(
-        "does-not-exist"
+        "does-not-exist",
+        user_id=user.id,
     )
 
     assert result is False
@@ -835,9 +1175,18 @@ def test_clear_database_resource_cache_disposes_engines(
 def test_conversation_exists(
     test_database,
 ):
+    user = _create_test_user(
+        "exists@example.com"
+    )
+
+    other_user = _create_test_user(
+        "exists-other@example.com"
+    )
+
     assert (
         database.conversation_exists(
-            "thread-existing"
+            "thread-existing",
+            user_id=user.id,
         )
         is False
     )
@@ -845,13 +1194,23 @@ def test_conversation_exists(
     create_or_update_conversation(
         thread_id="thread-existing",
         first_message="Hello",
+        user_id=user.id,
     )
 
     assert (
         database.conversation_exists(
-            "thread-existing"
+            "thread-existing",
+            user_id=user.id,
         )
         is True
+    )
+
+    assert (
+        database.conversation_exists(
+            "thread-existing",
+            user_id=other_user.id,
+        )
+        is False
     )
 
 

@@ -1,4 +1,11 @@
-from fastapi import APIRouter
+from fastapi import (
+    APIRouter,
+    Depends,
+)
+
+from api.dependencies.auth import (
+    get_current_user,
+)
 
 from services.conversation_service import (
     delete_conversation_resources,
@@ -11,10 +18,16 @@ router = APIRouter()
 
 
 @router.get("/conversations")
-async def conversations():
+async def conversations(
+    current_user=Depends(
+        get_current_user
+    ),
+):
     return {
         "conversations": (
-            list_conversation_summaries()
+            list_conversation_summaries(
+                user_id=current_user.id
+            )
         )
     }
 
@@ -22,11 +35,15 @@ async def conversations():
 @router.get("/history/{thread_id}")
 async def history(
     thread_id: str,
+    current_user=Depends(
+        get_current_user
+    ),
 ):
     return {
         "messages": (
             get_conversation_history(
-                thread_id
+                thread_id,
+                user_id=current_user.id,
             )
         )
     }
@@ -37,10 +54,14 @@ async def history(
 )
 async def delete_conversation_endpoint(
     thread_id: str,
+    current_user=Depends(
+        get_current_user
+    ),
 ):
     result = (
         delete_conversation_resources(
-            thread_id
+            thread_id,
+            user_id=current_user.id,
         )
     )
 

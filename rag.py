@@ -80,6 +80,8 @@ def add_document_to_rag(
     file_path: str,
     thread_id: str,
     original_filename: str | None = None,
+    *,
+    user_id: int,
 ):
     path = Path(file_path)
 
@@ -182,6 +184,7 @@ def add_document_to_rag(
 
     try:
         rag_document = RagDocument(
+            user_id=user_id,
             thread_id=thread_id,
             source_name=source_name,
             stored_name=stored_name,
@@ -235,6 +238,8 @@ def add_document_to_rag(
 def retrieve_candidates_from_rag(
     query: str,
     thread_id: str,
+    *,
+    user_id: int,
     k: int = 4,
 ) -> list[dict]:
     """
@@ -273,7 +278,9 @@ def retrieve_candidates_from_rag(
             )
             .filter(
                 RagDocument.thread_id
-                == thread_id
+                == thread_id,
+                RagDocument.user_id
+                == user_id,
             )
             .order_by(
                 distance
@@ -543,6 +550,8 @@ def build_rag_context(
 def retrieve_from_rag(
     query: str,
     thread_id: str,
+    *,
+    user_id: int,
     k: int = 4,
 ) -> dict:
     """
@@ -554,6 +563,7 @@ def retrieve_from_rag(
         retrieve_candidates_from_rag(
             query=query,
             thread_id=thread_id,
+            user_id=user_id,
             k=k,
         )
     )
@@ -568,6 +578,8 @@ def retrieve_from_rag(
 def delete_document_from_rag(
     thread_id: str,
     stored_name: str,
+    *,
+    user_id: int,
 ) -> dict:
     """
     Delete one uploaded document, its RAG chunks,
@@ -585,11 +597,19 @@ def delete_document_from_rag(
             .filter(
                 RagDocument.thread_id
                 == thread_id,
+                RagDocument.user_id
+                == user_id,
                 RagDocument.stored_name
                 == stored_name,
             )
             .first()
         )
+
+        if document is None:
+            return {
+                "deleted_chunks": 0,
+                "deleted_files": 0,
+            }
 
         deleted_chunks = 0
 
@@ -644,6 +664,8 @@ def delete_document_from_rag(
 
 def delete_thread_documents(
     thread_id: str,
+    *,
+    user_id: int,
 ) -> dict:
     """
     Delete all uploaded documents, RAG chunks,
@@ -657,7 +679,9 @@ def delete_thread_documents(
             db.query(RagDocument)
             .filter(
                 RagDocument.thread_id
-                == thread_id
+                == thread_id,
+                RagDocument.user_id
+                == user_id,
             )
             .all()
         )

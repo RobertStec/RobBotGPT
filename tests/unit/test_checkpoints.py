@@ -152,6 +152,55 @@ def test_checkpoint_cache_is_separated_by_database_url(
 
 
 
+def test_build_checkpoint_thread_id():
+    result = (
+        checkpoints.build_checkpoint_thread_id(
+            "thread-123",
+            user_id=42,
+        )
+    )
+
+    assert (
+        result
+        == "user:42:thread:thread-123"
+    )
+
+
+@pytest.mark.parametrize(
+    "user_id",
+    [
+        0,
+        -1,
+        True,
+        None,
+        "123",
+    ],
+)
+
+def test_build_checkpoint_thread_id_rejects_invalid_user_id(
+    user_id,
+):
+    with pytest.raises(
+        ValueError,
+        match="user_id must be a positive integer",
+    ):
+        checkpoints.build_checkpoint_thread_id(
+            "thread-123",
+            user_id=user_id,
+        )
+
+
+def test_build_checkpoint_thread_id_rejects_missing_thread_id():
+    with pytest.raises(
+        ValueError,
+        match="thread_id is required",
+    ):
+        checkpoints.build_checkpoint_thread_id(
+            "",
+            user_id=42,
+        )
+
+
 
 def test_delete_thread_checkpoints(
     mocker,
@@ -164,13 +213,17 @@ def test_delete_thread_checkpoints(
     )
 
     checkpoints.delete_thread_checkpoints(
-        "thread-123"
+        "thread-123",
+        user_id=42,
     )
 
-    mock_checkpointer.delete_thread.assert_called_once_with(
-        "thread-123"
+    (
+        mock_checkpointer
+        .delete_thread
+        .assert_called_once_with(
+            "user:42:thread:thread-123"
+        )
     )
-
 
 
 

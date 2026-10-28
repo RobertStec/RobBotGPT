@@ -153,14 +153,25 @@ def build_hitl_graph(
 def test_postgres_checkpoint_survives_resource_restart(
     postgres_checkpoint_database,
 ):
+    user_id = 101
+
     thread_id = (
         "postgres-hitl-"
         f"{uuid.uuid4()}"
     )
 
+    checkpoint_thread_id = (
+        checkpoints.build_checkpoint_thread_id(
+            thread_id,
+            user_id=user_id,
+        )
+    )
+
     config = {
         "configurable": {
-            "thread_id": thread_id
+            "thread_id": checkpoint_thread_id,
+            "conversation_thread_id": thread_id,
+            "user_id": user_id,
         }
     }
 
@@ -253,7 +264,8 @@ def test_postgres_checkpoint_survives_resource_restart(
 
     finally:
         checkpoints.delete_thread_checkpoints(
-            thread_id
+            thread_id,
+            user_id=user_id,
         )
 
         checkpoints.clear_checkpoint_resource_cache()
@@ -264,14 +276,25 @@ def test_postgres_checkpoint_survives_resource_restart(
 def test_postgres_checkpoint_rows_are_deleted_with_thread(
     postgres_checkpoint_database,
 ):
+    user_id = 202
+
     thread_id = (
         "postgres-delete-"
         f"{uuid.uuid4()}"
     )
 
+    checkpoint_thread_id = (
+        checkpoints.build_checkpoint_thread_id(
+            thread_id,
+            user_id=user_id,
+        )
+    )
+
     config = {
         "configurable": {
-            "thread_id": thread_id
+            "thread_id": checkpoint_thread_id,
+            "conversation_thread_id": thread_id,
+            "user_id": user_id,
         }
     }
 
@@ -313,7 +336,7 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
                     FROM checkpoints
                     WHERE thread_id = %s
                     """,
-                    (thread_id,),
+                    (checkpoint_thread_id,),
                 )
 
                 checkpoint_count = (
@@ -326,7 +349,7 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
                     FROM checkpoint_blobs
                     WHERE thread_id = %s
                     """,
-                    (thread_id,),
+                    (checkpoint_thread_id,),
                 )
 
                 blob_count = (
@@ -339,7 +362,7 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
                     FROM checkpoint_writes
                     WHERE thread_id = %s
                     """,
-                    (thread_id,),
+                    (checkpoint_thread_id,),
                 )
 
                 write_count = (
@@ -360,7 +383,8 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
         # =====================================
 
         checkpoints.delete_thread_checkpoints(
-            thread_id
+            thread_id,
+            user_id=user_id,
         )
 
         # =====================================
@@ -380,7 +404,7 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
                         FROM {table_name}
                         WHERE thread_id = %s
                         """,
-                        (thread_id,),
+                        (checkpoint_thread_id,),
                     )
 
                     count = (
@@ -393,7 +417,186 @@ def test_postgres_checkpoint_rows_are_deleted_with_thread(
         # Safe even when rows are already gone.
         try:
             checkpoints.delete_thread_checkpoints(
-                thread_id
+                thread_id,
+                user_id=user_id,
             )
+        finally:
+            checkpoints.clear_checkpoint_resource_cache()
+
+
+
+
+def test_postgres_checkpoints_are_isolated_by_user_thread_id(
+    postgres_checkpoint_database,
+):
+    conversation_thread_id = (
+        "postgres-isolation-"
+        f"{uuid.uuid4()}"
+    )
+
+    user_a_id = 301
+    user_b_id = 302
+
+    checkpoint_thread_a = (
+        checkpoints.build_checkpoint_thread_id(
+            conversation_thread_id,
+            user_id=user_a_id,
+        )
+    )
+
+    checkpoint_thread_b = (
+        checkpoints.build_checkpoint_thread_id(
+            conversation_thread_id,
+            user_id=user_b_id,
+        )
+    )
+
+    assert (
+        checkpoint_thread_a
+        != checkpoint_thread_b
+    )
+
+    config_a = {
+        "configurable": {
+            "thread_id": checkpoint_thread_a,
+            "conversation_thread_id": (
+                conversation_thread_id
+            ),
+            "user_id": user_a_id,
+        }
+    }
+
+    config_b = {
+        "configurable": {
+            "thread_id": checkpoint_thread_b,
+            "conversation_thread_id": (
+                conversation_thread_id
+            ),
+            "user_id": user_b_id,
+        }
+    }
+
+    checkpoints.clear_checkpoint_resource_cache()
+
+    try:
+        resource = (
+            checkpoints.get_checkpoint_resource()
+        )
+
+        graph = build_hitl_graph(
+            resource.checkpointer
+        )
+
+        result_a = graph.invoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "Buy 5 shares of AAPL"
+                        )
+                    )
+                ]
+            },
+            config=config_a,
+        )
+
+        assert "__interrupt__" in result_a
+
+        result_b = graph.invoke(
+            {
+                "messages": [
+                    HumanMessage(
+                        content=(
+                            "Buy 5 shares of AAPL"
+                        )
+                    )
+                ]
+            },
+            config=config_b,
+        )
+
+        assert "__interrupt__" in result_b
+
+        with resource.pool.connection() as conn:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM checkpoints
+                    WHERE thread_id = %s
+                    """,
+                    (checkpoint_thread_a,),
+                )
+
+                count_a = (
+                    cursor.fetchone()["count"]
+                )
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM checkpoints
+                    WHERE thread_id = %s
+                    """,
+                    (checkpoint_thread_b,),
+                )
+
+                count_b = (
+                    cursor.fetchone()["count"]
+                )
+
+        assert count_a > 0
+        assert count_b > 0
+
+        checkpoints.delete_thread_checkpoints(
+            conversation_thread_id,
+            user_id=user_a_id,
+        )
+
+        with resource.pool.connection() as conn:
+            with conn.cursor() as cursor:
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM checkpoints
+                    WHERE thread_id = %s
+                    """,
+                    (checkpoint_thread_a,),
+                )
+
+                remaining_a = (
+                    cursor.fetchone()["count"]
+                )
+
+                cursor.execute(
+                    """
+                    SELECT COUNT(*)
+                    FROM checkpoints
+                    WHERE thread_id = %s
+                    """,
+                    (checkpoint_thread_b,),
+                )
+
+                remaining_b = (
+                    cursor.fetchone()["count"]
+                )
+
+        assert remaining_a == 0
+        assert remaining_b > 0
+
+    finally:
+        try:
+            checkpoints.delete_thread_checkpoints(
+                conversation_thread_id,
+                user_id=user_a_id,
+            )
+
+            checkpoints.delete_thread_checkpoints(
+                conversation_thread_id,
+                user_id=user_b_id,
+            )
+
         finally:
             checkpoints.clear_checkpoint_resource_cache()

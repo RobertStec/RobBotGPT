@@ -2,6 +2,7 @@ import logging
 
 from fastapi import (
     APIRouter,
+    Depends,
     Request,
 )
 from fastapi.responses import (
@@ -19,6 +20,7 @@ from langgraph.types import Command
 from agent import get_agent
 
 from database import (
+    conversation_exists,
     create_or_update_conversation,
     save_chat_message,
 )
@@ -31,6 +33,19 @@ from services.streaming import (
 
 from core.config import settings
 
+from api.dependencies.auth import (
+    get_current_user,
+)
+
+from core.exceptions import (
+    ConversationNotFoundError,
+)
+
+from checkpoints import (
+    build_checkpoint_thread_id,
+)
+
+
 
 
 logger = logging.getLogger(__name__)
@@ -40,7 +55,12 @@ router = APIRouter()
 
 
 @router.post("/chat/stream")
-async def chat_stream(request: Request):
+async def chat_stream(
+    request: Request,
+    current_user=Depends(
+        get_current_user
+    ),
+):
     try:
         data = await request.json()
     except Exception:
@@ -63,38 +83,66 @@ async def chat_stream(request: Request):
             status_code=400
         )
 
-    agent = get_agent(selected_model)
+    user_id = current_user.id
 
-    if not is_resume:
-        create_or_update_conversation(
+
+    if is_resume:
+        if not conversation_exists(
             thread_id,
-            user_message
+            user_id=user_id,
+        ):
+            raise ConversationNotFoundError()
+
+    else:
+        conversation_ready = (
+            create_or_update_conversation(
+                thread_id,
+                user_message,
+                user_id=user_id,
+            )
         )
 
-        save_chat_message(
+        if not conversation_ready:
+            raise ConversationNotFoundError()
+
+        message_saved = save_chat_message(
             thread_id,
             "user",
-            user_message
+            user_message,
+            user_id=user_id,
         )
+
+        if not message_saved:
+            raise ConversationNotFoundError()
+
+
+    agent = get_agent(selected_model)
+
+    checkpoint_thread_id = (
+        build_checkpoint_thread_id(
+            thread_id,
+            user_id=user_id,
+        )
+    )
 
 
     config = {
         "configurable": {
-            "thread_id": thread_id
+            "thread_id": checkpoint_thread_id,
+            "conversation_thread_id": thread_id,
+            "user_id": user_id,
         },
-
         "run_name": "RobBotGPT",
-
         "tags": [
             "robbotgpt",
-            "langgraph"
+            "langgraph",
         ],
-
         "metadata": {
+            "user_id": user_id,
             "thread_id": thread_id,
             "model": selected_model,
-            "speech_language": speech_language
-        }
+            "speech_language": speech_language,
+        },
     }
 
     def event_generator():
@@ -328,7 +376,8 @@ async def chat_stream(request: Request):
                     thread_id,
                     "assistant",
                     final_answer,
-                    sources=rag_sources
+                    sources=rag_sources,
+                    user_id=user_id
                 )
 
             yield sse_data({
@@ -341,8 +390,9 @@ async def chat_stream(request: Request):
             logger.exception(
                 (
                     "Chat stream failed "
-                    "thread_id=%s model=%s"
+                    "user_id=%s thread_id=%s model=%s"
                 ),
+                user_id,
                 thread_id,
                 selected_model,
             )

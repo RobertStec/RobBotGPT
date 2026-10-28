@@ -1,6 +1,61 @@
 import database
 from pathlib import Path
+
 import services.document_service as document_service
+
+
+PASSWORD = "StrongPassword123!"
+
+
+def _register_and_login(
+    api_client,
+    email: str,
+):
+    register_response = api_client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    login_response = api_client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert login_response.status_code == 200
+
+    return login_response.json()["user"]
+
+
+def test_upload_requires_authentication(
+    api_client,
+):
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-auth"
+        },
+        files={
+            "file": (
+                "document.txt",
+                b"content",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 401
+
+    assert response.json()["error_code"] == (
+        "authentication_required"
+    )
 
 
 # Poprawny upload TXT
@@ -9,6 +64,11 @@ def test_upload_document_success(
     api_client,
     mocker,
 ):
+    user = _register_and_login(
+        api_client,
+        "upload-success@example.com",
+    )
+
     mock_add_document = mocker.patch.object(
         document_service,
         "add_document_to_rag",
@@ -54,6 +114,11 @@ def test_upload_document_success(
     )
 
     assert (
+        call_kwargs["user_id"]
+        == user["id"]
+    )
+
+    assert (
         call_kwargs["original_filename"]
         == "document.txt"
     )
@@ -83,7 +148,9 @@ def test_upload_document_success(
     )
 
     conversations = (
-        database.list_conversations()
+        database.list_conversations(
+            user_id=user["id"]
+        )
     )
 
     assert any(
@@ -93,20 +160,25 @@ def test_upload_document_success(
     )
 
 
-
-
 # Test czy plik naprawdę został zapisany
 
 def test_upload_document_writes_file_before_rag_ingestion(
     api_client,
     mocker,
 ):
+    user = _register_and_login(
+        api_client,
+        "upload-file@example.com",
+    )
+
     captured = {}
 
     def fake_add_document_to_rag(
         file_path,
         thread_id,
         original_filename,
+        *,
+        user_id,
     ):
         with open(
             file_path,
@@ -118,6 +190,10 @@ def test_upload_document_writes_file_before_rag_ingestion(
 
         captured["thread_id"] = (
             thread_id
+        )
+
+        captured["user_id"] = (
+            user_id
         )
 
         captured["filename"] = (
@@ -161,11 +237,14 @@ def test_upload_document_writes_file_before_rag_ingestion(
     )
 
     assert (
+        captured["user_id"]
+        == user["id"]
+    )
+
+    assert (
         captured["filename"]
         == "notes.txt"
     )
-
-
 
 
 # Test nieobsługiwany format
@@ -174,6 +253,11 @@ def test_upload_rejects_unsupported_file_type(
     api_client,
     mocker,
 ):
+    _register_and_login(
+        api_client,
+        "upload-invalid@example.com",
+    )
+
     mock_add_document = mocker.patch.object(
         document_service,
         "add_document_to_rag",
@@ -207,13 +291,17 @@ def test_upload_rejects_unsupported_file_type(
     mock_add_document.assert_not_called()
 
 
-
-# test błąd RAG podczas uploadu
+# Test błąd RAG podczas uploadu
 
 def test_upload_returns_500_when_rag_ingestion_fails(
     api_client,
     mocker,
 ):
+    user = _register_and_login(
+        api_client,
+        "upload-rag-error@example.com",
+    )
+
     mocker.patch.object(
         document_service,
         "add_document_to_rag",
@@ -277,12 +365,19 @@ def test_upload_returns_500_when_rag_ingestion_fails(
     )
 
     assert (
+        cleanup_kwargs["user_id"]
+        == user["id"]
+    )
+
+    assert (
         cleanup_kwargs["stored_name"]
         .endswith("_document.txt")
     )
 
     conversations = (
-        database.list_conversations()
+        database.list_conversations(
+            user_id=user["id"]
+        )
     )
 
     assert all(
@@ -292,13 +387,16 @@ def test_upload_returns_500_when_rag_ingestion_fails(
     )
 
 
-
-
 # Test brak thread_id
 
 def test_upload_requires_thread_id(
     api_client,
 ):
+    _register_and_login(
+        api_client,
+        "upload-no-thread@example.com",
+    )
+
     response = api_client.post(
         "/upload",
         files={
@@ -313,13 +411,16 @@ def test_upload_requires_thread_id(
     assert response.status_code == 422
 
 
-
-
-# Test Brak pliku
+# Test brak pliku
 
 def test_upload_requires_file(
     api_client,
 ):
+    _register_and_login(
+        api_client,
+        "upload-no-file@example.com",
+    )
+
     response = api_client.post(
         "/upload",
         data={
@@ -330,20 +431,72 @@ def test_upload_requires_file(
     assert response.status_code == 422
 
 
-
-# Test DB pada po udanym RAG
-
-def test_upload_rolls_back_when_conversation_save_fails(
+def test_upload_rejects_foreign_thread(
     api_client,
     mocker,
 ):
-    mocker.patch.object(
+    owner = _register_and_login(
+        api_client,
+        "upload-owner@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="private-upload-thread",
+        first_message="Private conversation",
+        user_id=owner["id"],
+    )
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    _register_and_login(
+        api_client,
+        "upload-other@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
         document_service,
         "add_document_to_rag",
-        return_value={
-            "filename": "document.txt",
-            "chunks": 3,
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "private-upload-thread"
         },
+        files={
+            "file": (
+                "secret.txt",
+                b"Unauthorized upload",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["error_code"] == (
+        "conversation_not_found"
+    )
+
+    mock_add_document.assert_not_called()
+
+
+# Test DB pada przed RAG
+
+def test_upload_returns_500_when_conversation_save_fails(
+    api_client,
+    mocker,
+):
+    _register_and_login(
+        api_client,
+        "upload-db-error@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
     )
 
     mocker.patch.object(
@@ -357,10 +510,6 @@ def test_upload_rolls_back_when_conversation_save_fails(
     mock_cleanup = mocker.patch.object(
         document_service,
         "delete_document_from_rag",
-        return_value={
-            "deleted_chunks": 3,
-            "deleted_files": 1,
-        },
     )
 
     response = api_client.post(
@@ -397,20 +546,5 @@ def test_upload_rolls_back_when_conversation_save_fails(
         not in response.text
     )
 
-    mock_cleanup.assert_called_once()
-
-    cleanup_kwargs = (
-        mock_cleanup
-        .call_args
-        .kwargs
-    )
-
-    assert (
-        cleanup_kwargs["thread_id"]
-        == "thread-db-error"
-    )
-
-    assert (
-        cleanup_kwargs["stored_name"]
-        .endswith("_document.txt")
-    )
+    mock_add_document.assert_not_called()
+    mock_cleanup.assert_not_called()

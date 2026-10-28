@@ -24,13 +24,20 @@ from services.streaming import (
 )
 
 
-def list_conversation_summaries() -> list[dict]:
+
+
+def list_conversation_summaries(
+    *,
+    user_id: int,
+) -> list[dict]:
     """
-    Return conversations serialized
-    for the API layer.
+    Return conversations owned by one user,
+    serialized for the API layer.
     """
 
-    items = list_conversations()
+    items = list_conversations(
+        user_id=user_id
+    )
 
     return [
         {
@@ -47,16 +54,27 @@ def list_conversation_summaries() -> list[dict]:
     ]
 
 
+
+
 def get_conversation_history(
     thread_id: str,
+    *,
+    user_id: int,
 ) -> list[dict]:
     """
-    Return serialized chat history
-    for one conversation.
+    Return chat history only when the
+    conversation belongs to the user.
     """
 
+    if not conversation_exists(
+        thread_id,
+        user_id=user_id,
+    ):
+        raise ConversationNotFoundError()
+
     messages = get_chat_history(
-        thread_id
+        thread_id,
+        user_id=user_id,
     )
 
     return [
@@ -71,8 +89,12 @@ def get_conversation_history(
     ]
 
 
+
+
 def delete_conversation_resources(
     thread_id: str,
+    *,
+    user_id: int,
 ) -> dict:
     """
     Delete all resources belonging to a conversation.
@@ -83,7 +105,8 @@ def delete_conversation_resources(
 
     try:
         if not conversation_exists(
-            thread_id
+            thread_id,
+            user_id=user_id,
         ):
             raise ConversationNotFoundError()
 
@@ -91,7 +114,8 @@ def delete_conversation_resources(
         try:
             rag_result = (
                 delete_thread_documents(
-                    thread_id
+                    thread_id,
+                    user_id=user_id,
                 )
             )
 
@@ -106,7 +130,8 @@ def delete_conversation_resources(
         # 2. LangGraph checkpoints
         try:
             delete_thread_checkpoints(
-                thread_id
+                thread_id,
+                user_id=user_id,
             )
 
         except Exception as exc:
@@ -121,7 +146,8 @@ def delete_conversation_resources(
         try:
             deleted = (
                 delete_conversation_from_db(
-                    thread_id
+                    thread_id,
+                    user_id=user_id,
                 )
             )
 

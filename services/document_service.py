@@ -7,9 +7,12 @@ from core.exceptions import (
     AppError,
     DocumentProcessingError,
     UnsupportedFileTypeError,
+    ConversationNotFoundError,
 )
 from database import (
+    conversation_exists,
     create_or_update_conversation,
+    delete_conversation,
 )
 from rag import (
     add_document_to_rag,
@@ -59,10 +62,11 @@ def process_uploaded_document(
     filename: str,
     content: bytes,
     thread_id: str,
+    user_id: int,
 ) -> dict:
     """
     Persist an uploaded document, ingest it into RAG,
-    and create/update its conversation.
+    and create/update its user-owned conversation.
 
     Compensates partial failures where possible.
     """
@@ -92,9 +96,30 @@ def process_uploaded_document(
         / stored_name
     )
 
+    conversation_preexisting = (
+        conversation_exists(
+            thread_id,
+            user_id=user_id,
+        )
+    )
+
+    ownership_established = False
     rag_attempted = False
 
     try:
+        conversation_ready = (
+            create_or_update_conversation(
+                thread_id,
+                "Uploaded document",
+                user_id=user_id,
+            )
+        )
+
+        if not conversation_ready:
+            raise ConversationNotFoundError()
+
+        ownership_established = True
+
         file_path.write_bytes(
             content
         )
@@ -105,11 +130,7 @@ def process_uploaded_document(
             file_path=str(file_path),
             thread_id=thread_id,
             original_filename=filename,
-        )
-
-        create_or_update_conversation(
-            thread_id,
-            "Uploaded document",
+            user_id=user_id,
         )
 
         return {
@@ -124,26 +145,44 @@ def process_uploaded_document(
                 delete_document_from_rag(
                     thread_id=thread_id,
                     stored_name=stored_name,
+                    user_id=user_id,
                 )
 
             except Exception:
                 logger.exception(
                     (
                         "Document rollback failed "
-                        "thread_id=%s stored_name=%s"
+                        "user_id=%s thread_id=%s "
+                        "stored_name=%s"
                     ),
+                    user_id,
                     thread_id,
                     stored_name,
                 )
 
-                _remove_file_if_exists(
-                    file_path
+        _remove_file_if_exists(
+            file_path
+        )
+
+        if (
+            ownership_established
+            and not conversation_preexisting
+        ):
+            try:
+                delete_conversation(
+                    thread_id,
+                    user_id=user_id,
                 )
 
-        else:
-            _remove_file_if_exists(
-                file_path
-            )
+            except Exception:
+                logger.exception(
+                    (
+                        "Conversation rollback failed "
+                        "user_id=%s thread_id=%s"
+                    ),
+                    user_id,
+                    thread_id,
+                )
 
         if isinstance(
             exc,

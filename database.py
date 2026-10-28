@@ -221,6 +221,7 @@ class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey( "users.id", ondelete="CASCADE"), nullable=False, index=True)
     thread_id = Column(String, unique=True, index=True)
     title = Column(String, default="New Chat")
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -231,6 +232,7 @@ class ChatMessage(Base):
     __tablename__ = "chat_messages"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     thread_id = Column(String, index=True)
     role = Column(String)
     content = Column(Text)
@@ -242,6 +244,7 @@ class LongTermMemory(Base):
     __tablename__ = "long_term_memory"
 
     id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     thread_id = Column(String, index=True)
     memory = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -251,6 +254,7 @@ class RagDocument(Base):
     __tablename__ = "rag_documents"
 
     id = Column(Integer, primary_key=True,)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     thread_id = Column(String, nullable=False, index=True)
     source_name = Column(String, nullable=False)
     stored_name = Column(String, nullable=False, unique=True, index=True)
@@ -461,84 +465,15 @@ def init_db() -> None:
 
 
 
-def create_or_update_conversation(thread_id: str, first_message: str | None = None):
-    db = create_session()
-
-    try:
-        conversation = (
-            db.query(Conversation)
-            .filter(Conversation.thread_id == thread_id)
-            .first()
-        )
-
-        if not conversation:
-            title = "New Chat"
-
-            if first_message:
-                title = first_message.strip()[:40]
-                if len(first_message.strip()) > 40:
-                    title += "..."
-
-            conversation = Conversation(
-                thread_id=thread_id,
-                title=title,
-                created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
-            )
-
-            db.add(conversation)
-
-        else:
-            conversation.updated_at = datetime.utcnow()
-
-        db.commit()
-
-    finally:
-        db.close()
-
-
-def list_conversations():
-    db = create_session()
-
-    try:
-        return (
-            db.query(Conversation)
-            .order_by(Conversation.updated_at.desc())
-            .all()
-        )
-
-    finally:
-        db.close()
-
-
-def save_chat_message(
+def create_or_update_conversation(
     thread_id: str,
-    role: str,
-    content: str,
-    sources: list | None = None,
-):
+    first_message: str | None = None,
+    *,
+    user_id: int,
+) -> bool:
     db = create_session()
+
     try:
-
-        sources_json = (
-            json.dumps(
-                sources,
-                ensure_ascii=False
-            )
-            if sources
-            else None
-        )
-
-        msg = ChatMessage(
-            thread_id=thread_id,
-            role=role,
-            content=content,
-            sources=sources_json,
-            created_at=datetime.utcnow()
-        )
-
-        db.add(msg)
-
         conversation = (
             db.query(Conversation)
             .filter(
@@ -548,27 +483,73 @@ def save_chat_message(
             .first()
         )
 
-        if conversation:
+        # Existing thread belongs to another user
+        # or is legacy data without an owner.
+        if (
+            conversation is not None
+            and conversation.user_id
+            != user_id
+        ):
+            return False
+
+        if conversation is None:
+            title = "New Chat"
+
+            if first_message:
+                stripped_message = (
+                    first_message.strip()
+                )
+
+                title = stripped_message[:40]
+
+                if len(stripped_message) > 40:
+                    title += "..."
+
+            conversation = Conversation(
+                user_id=user_id,
+                thread_id=thread_id,
+                title=title,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow(),
+            )
+
+            db.add(conversation)
+
+        else:
             conversation.updated_at = (
                 datetime.utcnow()
             )
 
         db.commit()
 
+        return True
+
+    except Exception:
+        db.rollback()
+        raise
+
     finally:
         db.close()
 
-        
 
 
-def get_chat_history(thread_id: str):
+
+def list_conversations(
+    *,
+    user_id: int,
+):
     db = create_session()
 
     try:
         return (
-            db.query(ChatMessage)
-            .filter(ChatMessage.thread_id == thread_id)
-            .order_by(ChatMessage.created_at.asc())
+            db.query(Conversation)
+            .filter(
+                Conversation.user_id
+                == user_id
+            )
+            .order_by(
+                Conversation.updated_at.desc()
+            )
             .all()
         )
 
@@ -576,14 +557,113 @@ def get_chat_history(thread_id: str):
         db.close()
 
 
-def save_memory(thread_id: str, memory: str):
+
+
+def save_chat_message(
+    thread_id: str,
+    role: str,
+    content: str,
+    sources: list | None = None,
+    *,
+    user_id: int,
+) -> bool:
+    db = create_session()
+
+    try:
+        conversation = (
+            db.query(Conversation)
+            .filter(
+                Conversation.thread_id
+                == thread_id,
+                Conversation.user_id
+                == user_id,
+            )
+            .first()
+        )
+
+        if conversation is None:
+            return False
+
+        sources_json = (
+            json.dumps(
+                sources,
+                ensure_ascii=False,
+            )
+            if sources
+            else None
+        )
+
+        message = ChatMessage(
+            user_id=user_id,
+            thread_id=thread_id,
+            role=role,
+            content=content,
+            sources=sources_json,
+            created_at=datetime.utcnow(),
+        )
+
+        db.add(message)
+
+        conversation.updated_at = (
+            datetime.utcnow()
+        )
+
+        db.commit()
+
+        return True
+
+    except Exception:
+        db.rollback()
+        raise
+
+    finally:
+        db.close()
+
+
+
+
+def get_chat_history(
+    thread_id: str,
+    *,
+    user_id: int,
+):
+    db = create_session()
+
+    try:
+        return (
+            db.query(ChatMessage)
+            .filter(
+                ChatMessage.thread_id
+                == thread_id,
+                ChatMessage.user_id
+                == user_id,
+            )
+            .order_by(
+                ChatMessage.created_at.asc()
+            )
+            .all()
+        )
+
+    finally:
+        db.close()
+
+
+
+
+def save_memory(
+    thread_id: str,
+    memory: str,
+    *,
+    user_id: int,
+):
     db = create_session()
 
     try:
         item = LongTermMemory(
+            user_id=user_id,
             thread_id=thread_id,
             memory=memory,
-            created_at=datetime.utcnow()
+            created_at=datetime.utcnow(),
         )
 
         db.add(item)
@@ -591,18 +671,36 @@ def save_memory(thread_id: str, memory: str):
 
         return "Memory saved successfully."
 
+    except Exception:
+        db.rollback()
+        raise
+
     finally:
         db.close()
 
 
-def search_memory(thread_id: str, query: str):
+
+
+def search_memory(
+    thread_id: str,
+    query: str,
+    *,
+    user_id: int,
+):
     db = create_session()
 
     try:
         memories = (
             db.query(LongTermMemory)
-            .filter(LongTermMemory.thread_id == thread_id)
-            .order_by(LongTermMemory.created_at.desc())
+            .filter(
+                LongTermMemory.thread_id
+                == thread_id,
+                LongTermMemory.user_id
+                == user_id,
+            )
+            .order_by(
+                LongTermMemory.created_at.desc()
+            )
             .limit(20)
             .all()
         )
@@ -610,7 +708,10 @@ def search_memory(thread_id: str, query: str):
         if not memories:
             return "No saved memory found."
 
-        return "\n".join([f"- {m.memory}" for m in memories])
+        return "\n".join(
+            f"- {memory.memory}"
+            for memory in memories
+        )
 
     finally:
         db.close()
@@ -620,10 +721,12 @@ def search_memory(thread_id: str, query: str):
 
 def conversation_exists(
     thread_id: str,
+    *,
+    user_id: int,
 ) -> bool:
     """
-    Check whether a conversation exists
-    without modifying any data.
+    Check whether a conversation belongs
+    to the specified user.
     """
 
     db = create_session()
@@ -633,7 +736,9 @@ def conversation_exists(
             db.query(Conversation.id)
             .filter(
                 Conversation.thread_id
-                == thread_id
+                == thread_id,
+                Conversation.user_id
+                == user_id,
             )
             .first()
             is not None
@@ -645,31 +750,46 @@ def conversation_exists(
 
 
 
-
-def delete_conversation(thread_id: str) -> bool:
+def delete_conversation(
+    thread_id: str,
+    *,
+    user_id: int,
+) -> bool:
     db = create_session()
 
     try:
         conversation = (
             db.query(Conversation)
-            .filter(Conversation.thread_id == thread_id)
+            .filter(
+                Conversation.thread_id
+                == thread_id,
+                Conversation.user_id
+                == user_id,
+            )
             .first()
         )
 
-        if not conversation:
+        if conversation is None:
             return False
 
-        # Delete chat messages
         db.query(ChatMessage).filter(
-            ChatMessage.thread_id == thread_id
-        ).delete(synchronize_session=False)
+            ChatMessage.thread_id
+            == thread_id,
+            ChatMessage.user_id
+            == user_id,
+        ).delete(
+            synchronize_session=False
+        )
 
-        # Delete long-term memory connected with this thread
         db.query(LongTermMemory).filter(
-            LongTermMemory.thread_id == thread_id
-        ).delete(synchronize_session=False)
+            LongTermMemory.thread_id
+            == thread_id,
+            LongTermMemory.user_id
+            == user_id,
+        ).delete(
+            synchronize_session=False
+        )
 
-        # Delete conversation
         db.delete(conversation)
 
         db.commit()

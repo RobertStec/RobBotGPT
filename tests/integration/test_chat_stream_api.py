@@ -22,6 +22,37 @@ def chat_router_module(
     )
 
 
+PASSWORD = "StrongPassword123!"
+
+
+def _register_and_login(
+    api_client,
+    email: str,
+):
+    register_response = api_client.post(
+        "/auth/register",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert register_response.status_code == 201
+
+    login_response = api_client.post(
+        "/auth/login",
+        json={
+            "email": email,
+            "password": PASSWORD,
+        },
+    )
+
+    assert login_response.status_code == 200
+
+    return login_response.json()["user"]
+
+
+
 
 def parse_sse_events(response):
     """
@@ -64,6 +95,12 @@ def test_chat_stream_returns_tokens_and_done(
     chat_router_module,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "chat-tool@example.com",
+    )
+
     fake_agent = mocker.Mock()
 
     fake_agent.stream.return_value = [
@@ -178,7 +215,27 @@ def test_chat_stream_returns_tokens_and_done(
 
     assert (
         config["configurable"]["thread_id"]
+        == (
+            f"user:{user['id']}:"
+            "thread:thread-chat"
+        )
+    )
+
+    assert (
+        config["configurable"][
+            "conversation_thread_id"
+        ]
         == "thread-chat"
+    )
+
+    assert (
+        config["configurable"]["user_id"]
+        == user["id"]
+    )
+
+    assert (
+        config["metadata"]["user_id"]
+        == user["id"]
     )
 
     assert (
@@ -201,7 +258,8 @@ def test_chat_stream_returns_tokens_and_done(
     ]
 
     history = database.get_chat_history(
-        "thread-chat"
+        "thread-chat",
+        user_id=user["id"]
     )
 
     assert len(history) == 2
@@ -222,6 +280,12 @@ def test_chat_stream_emits_tool_start_and_tool_end(
     chat_router_module,
     mocker,
 ):
+
+    _register_and_login(
+        api_client,
+        "chat-rag@example.com",
+    )
+
     fake_agent = mocker.Mock()
 
     tool_call_message = AIMessage(
@@ -329,6 +393,12 @@ def test_chat_stream_emits_rag_events_and_saves_sources(
     chat_router_module,
     mocker,
 ):
+
+    _register_and_login(
+        api_client,
+        "chat-error@example.com",
+    )
+
     fake_agent = mocker.Mock()
 
     sources = [
@@ -465,6 +535,12 @@ def test_chat_stream_emits_error_and_done_when_agent_fails(
     chat_router_module,
     mocker,
 ):
+
+    user = _register_and_login(
+        api_client,
+        "chat-invalid-json@example.com",
+    )
+
     fake_agent = mocker.Mock()
 
     fake_agent.stream.side_effect = (
@@ -517,7 +593,8 @@ def test_chat_stream_emits_error_and_done_when_agent_fails(
     )
 
     history = database.get_chat_history(
-        "thread-error"
+        "thread-error",
+        user_id=user["id"]
     )
 
     assert len(history) == 1
@@ -533,6 +610,12 @@ def test_chat_stream_emits_error_and_done_when_agent_fails(
 def test_chat_stream_rejects_invalid_json(
     api_client,
 ):
+
+    _register_and_login(
+        api_client,
+        "chat-empty@example.com",
+    )
+
     response = api_client.post(
         "/chat/stream",
         content="{invalid-json",
@@ -554,6 +637,12 @@ def test_chat_stream_rejects_invalid_json(
 def test_chat_stream_rejects_empty_message(
     api_client,
 ):
+
+    _register_and_login(
+        api_client,
+        "chat-fake@example.com",
+    )
+
     response = api_client.post(
         "/chat/stream",
         json={
@@ -567,3 +656,74 @@ def test_chat_stream_rejects_empty_message(
     assert response.json() == {
         "error": "Message is required."
     }
+
+
+
+
+def test_chat_stream_requires_authentication(
+    api_client,
+):
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Hello",
+            "thread_id": "thread-auth",
+        },
+    )
+
+    assert response.status_code == 401
+
+    assert response.json()["error_code"] == (
+        "authentication_required"
+    )
+
+
+
+
+def test_chat_stream_rejects_foreign_thread(
+    api_client,
+    chat_router_module,
+    mocker,
+):
+    owner = _register_and_login(
+        api_client,
+        "chat-owner@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="foreign-thread",
+        first_message="Private conversation",
+        user_id=owner["id"],
+    )
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    _register_and_login(
+        api_client,
+        "chat-other@example.com",
+    )
+
+    mock_get_agent = mocker.patch.object(
+        chat_router_module,
+        "get_agent",
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Try to use foreign thread",
+            "thread_id": "foreign-thread",
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["error_code"] == (
+        "conversation_not_found"
+    )
+
+    mock_get_agent.assert_not_called()
