@@ -1,7 +1,12 @@
 from langchain_openai import ChatOpenAI
 
 from core.config import settings
-from evals.seed_corpus import EVAL_THREAD_ID
+
+from evals.seed_corpus import (
+    EVAL_THREAD_ID,
+    get_eval_user,
+)
+
 from rag import retrieve_candidates_from_rag
 
 from reranker import (
@@ -15,6 +20,8 @@ QUERY = "Czy projekt Atlas jest opóźniony?"
 
 
 def main():
+    user = get_eval_user()
+
     llm = ChatOpenAI(
         model=settings.openai_model,
         temperature=0,
@@ -24,6 +31,7 @@ def main():
     candidates = retrieve_candidates_from_rag(
         query=QUERY,
         thread_id=EVAL_THREAD_ID,
+        user_id=user.id,
         k=settings.rag_retrieval_top_k,
     )
 
