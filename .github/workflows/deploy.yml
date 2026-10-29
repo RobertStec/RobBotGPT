@@ -94,7 +94,7 @@ jobs:
                 "echo Deploying image: $ROBBOTGPT_IMAGE",
 
                 "docker pull \"$ROBBOTGPT_IMAGE\"",
-                "docker compose --env-file .env.production -f docker-compose.prod.yml up -d --no-deps app",
+                "docker compose --env-file .env.production -f docker-compose.prod.yml up -d app",
 
                 "DEPLOYED_IMAGE=$(docker inspect robbotgpt-app --format '{{.Config.Image}}')",
                 "echo Deployed image: $DEPLOYED_IMAGE",
