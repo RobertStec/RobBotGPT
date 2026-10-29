@@ -1,5 +1,13 @@
 import database
 
+import pytest
+
+import core.rate_limit as rate_limit
+
+from core.exceptions import (
+    RateLimitExceededError,
+)
+
 from core.security import (
     hash_session_token,
     verify_password,
@@ -420,3 +428,298 @@ def test_logout_without_session_is_idempotent(
     assert response.json() == {
         "success": True
     }
+
+
+
+
+def test_register_applies_ip_rate_limit(
+    api_client,
+    mocker,
+):
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.post(
+        "/auth/register",
+        headers={
+            "X-Real-IP": "203.0.113.10"
+        },
+        json={
+            "email": "limited-register@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert response.status_code == 201
+
+    mock_enforce.assert_awaited_once_with(
+        scope="auth_register",
+        identifier="ip:203.0.113.10",
+        limit=5,
+        window_seconds=3600,
+    )
+
+
+
+
+def test_login_applies_ip_rate_limit(
+    api_client,
+    mocker,
+):
+    password = "StrongPassword123!"
+
+    api_client.post(
+        "/auth/register",
+        json={
+            "email": "limited-login@example.com",
+            "password": password,
+        },
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.post(
+        "/auth/login",
+        headers={
+            "X-Real-IP": "203.0.113.20"
+        },
+        json={
+            "email": "limited-login@example.com",
+            "password": password,
+        },
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="auth_login",
+        identifier="ip:203.0.113.20",
+        limit=10,
+        window_seconds=300,
+    )
+
+
+
+
+def test_register_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=120
+            )
+        ),
+    )
+
+    response = api_client.post(
+        "/auth/register",
+        json={
+            "email": "blocked-register@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert response.status_code == 429
+
+    assert (
+        response.headers["retry-after"]
+        == "120"
+    )
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"
+
+
+
+
+
+def test_login_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=45
+            )
+        ),
+    )
+
+    response = api_client.post(
+        "/auth/login",
+        json={
+            "email": "blocked@example.com",
+            "password": "StrongPassword123!",
+        },
+    )
+
+    assert response.status_code == 429
+
+    assert (
+        response.headers["retry-after"]
+        == "45"
+    )
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"
+
+
+
+
+def test_auth_me_applies_user_rate_limit(
+    api_client,
+    mocker,
+):
+    password = "StrongPassword123!"
+
+    api_client.post(
+        "/auth/register",
+        json={
+            "email": "me-rate-limit@example.com",
+            "password": password,
+        },
+    )
+
+    login_response = api_client.post(
+        "/auth/login",
+        json={
+            "email": "me-rate-limit@example.com",
+            "password": password,
+        },
+    )
+
+    user = login_response.json()["user"]
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.get(
+        "/auth/me"
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="auth_me",
+        identifier=f"user:{user['id']}",
+        limit=120,
+        window_seconds=60,
+    )
+
+
+
+
+def test_auth_me_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    password = "StrongPassword123!"
+
+    api_client.post(
+        "/auth/register",
+        json={
+            "email": "me-blocked@example.com",
+            "password": password,
+        },
+    )
+
+    api_client.post(
+        "/auth/login",
+        json={
+            "email": "me-blocked@example.com",
+            "password": password,
+        },
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=15
+            )
+        ),
+    )
+
+    response = api_client.get(
+        "/auth/me"
+    )
+
+    assert response.status_code == 429
+
+    assert response.headers[
+        "retry-after"
+    ] == "15"
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"
+
+
+
+
+def test_logout_applies_ip_rate_limit(
+    api_client,
+    mocker,
+):
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.post(
+        "/auth/logout",
+        headers={
+            "X-Real-IP": "203.0.113.30"
+        },
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="auth_logout",
+        identifier="ip:203.0.113.30",
+        limit=30,
+        window_seconds=60,
+    )
+
+
+
+def test_logout_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=12
+            )
+        ),
+    )
+
+    response = api_client.post(
+        "/auth/logout"
+    )
+
+    assert response.status_code == 429
+
+    assert response.headers[
+        "retry-after"
+    ] == "12"
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"

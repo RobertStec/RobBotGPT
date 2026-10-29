@@ -27,6 +27,33 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+
+    container_name: robbotgpt-redis
+
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no"
+      ]
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   app:
     build:
       context: .
@@ -59,9 +86,10 @@ services:
       APP_PORT: 8080
       APP_RELOAD: "false"
       DATABASE_URL: postgresql+psycopg://robbotgpt:robbotgpt_dev@db:5432/robbotgpt
+      REDIS_URL: redis://redis:6379/0
 
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
 
     volumes:
       - ./uploads:/app/uploads
@@ -69,6 +97,9 @@ services:
 
     depends_on:
       db:
+        condition: service_healthy
+
+      redis:
         condition: service_healthy
 
     healthcheck:

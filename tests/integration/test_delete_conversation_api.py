@@ -1,6 +1,11 @@
 import database
 import services.conversation_service as conversation_service
 
+from core.exceptions import (
+    RateLimitExceededError,
+)
+
+
 
 PASSWORD = "StrongPassword123!"
 
@@ -580,3 +585,113 @@ def test_delete_conversation_can_be_retried_after_partial_failure(
         mock_delete_checkpoints.call_count
         == 2
     )
+
+
+
+def test_delete_conversation_applies_user_rate_limit(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "delete-rate@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="delete-rate-thread",
+        first_message="Delete test",
+        user_id=user["id"],
+    )
+
+    mocker.patch.object(
+        conversation_service,
+        "delete_thread_documents",
+        return_value={
+            "deleted_chunks": 0,
+            "deleted_files": 0,
+        },
+    )
+
+    mocker.patch.object(
+        conversation_service,
+        "delete_thread_checkpoints",
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.delete(
+        "/conversations/delete-rate-thread"
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="conversation_delete",
+        identifier=f"user:{user['id']}",
+        limit=20,
+        window_seconds=60,
+    )
+
+
+
+
+def test_delete_conversation_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "delete-blocked@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="delete-blocked-thread",
+        first_message="Keep me",
+        user_id=user["id"],
+    )
+
+    mock_delete_rag = mocker.patch.object(
+        conversation_service,
+        "delete_thread_documents",
+    )
+
+    mock_delete_checkpoints = (
+        mocker.patch.object(
+            conversation_service,
+            "delete_thread_checkpoints",
+        )
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=18
+            )
+        ),
+    )
+
+    response = api_client.delete(
+        "/conversations/delete-blocked-thread"
+    )
+
+    assert response.status_code == 429
+
+    assert response.headers[
+        "retry-after"
+    ] == "18"
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"
+
+    mock_delete_rag.assert_not_called()
+    mock_delete_checkpoints.assert_not_called()
+
+    assert database.conversation_exists(
+        "delete-blocked-thread",
+        user_id=user["id"],
+    ) is True
