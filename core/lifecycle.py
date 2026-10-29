@@ -20,7 +20,15 @@ from rag import (
 )
 
 import logging
+
 from core.logging import configure_logging
+
+from core.rate_limit import (
+    clear_rate_limit_resource_cache,
+    initialize_rate_limit_resources,
+)
+
+
 
 
 
@@ -84,7 +92,11 @@ async def lifespan(
     initialize_resources()
 
     try:
+        await initialize_rate_limit_resources()
+
         yield
 
     finally:
+        await clear_rate_limit_resource_cache()
+
         shutdown_resources()

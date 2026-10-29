@@ -113,6 +113,10 @@ class Settings(BaseSettings):
 
     database_url: str
 
+    redis_url: str = (
+        "redis://localhost:6379/0"
+    )
+
 
     # =====================================================
     # RAG
@@ -202,6 +206,7 @@ class Settings(BaseSettings):
         "database_url",
         "app_host",
         "auth_cookie_name",
+        "redis_url",
     )
     @classmethod
     def validate_non_empty_string(

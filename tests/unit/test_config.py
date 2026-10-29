@@ -19,6 +19,7 @@ def test_settings_default_values(
         "DATA_DIR",
         "UPLOAD_DIR",
         "DATABASE_URL",
+        "REDIS_URL",
         "RAG_CHUNK_SIZE",
         "RAG_CHUNK_OVERLAP",
         "RAG_CONTEXT_MAX_CHARS",
@@ -62,6 +63,11 @@ def test_settings_default_values(
             "postgresql+psycopg://"
             "user:password@localhost:5433/test_db"
         )
+    )
+
+    assert (
+        settings.redis_url
+        == "redis://localhost:6379/0"
     )
 
     assert (
@@ -138,6 +144,11 @@ def test_settings_reads_environment_variables(
     )
 
     monkeypatch.setenv(
+        "REDIS_URL",
+        "redis://test-redis:6379/1",
+    )
+
+    monkeypatch.setenv(
         "RAG_CONTEXT_MAX_CHARS",
         "8000",
     )
@@ -158,6 +169,11 @@ def test_settings_reads_environment_variables(
     assert (
         settings.rag_context_max_chars
         == 8000
+    )
+
+    assert (
+        settings.redis_url
+        == "redis://test-redis:6379/1"
     )
 
 

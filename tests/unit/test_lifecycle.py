@@ -116,6 +116,16 @@ async def test_lifespan_initializes_and_shuts_down(
         "core.lifecycle.shutdown_resources"
     )
 
+    mock_initialize_rate_limit = mocker.patch(
+        "core.lifecycle.initialize_rate_limit_resources",
+        new_callable=mocker.AsyncMock,
+    )
+
+    mock_clear_rate_limit = mocker.patch(
+        "core.lifecycle.clear_rate_limit_resource_cache",
+        new_callable=mocker.AsyncMock,
+)
+
     fake_app = mocker.Mock()
 
     async with lifecycle.lifespan(
@@ -125,7 +135,13 @@ async def test_lifespan_initializes_and_shuts_down(
 
         mock_shutdown.assert_not_called()
 
+        mock_initialize_rate_limit.assert_awaited_once_with()
+
+        mock_clear_rate_limit.assert_not_awaited()
+
     mock_shutdown.assert_called_once_with()
+
+    mock_clear_rate_limit.assert_awaited_once_with()
 
 
 
@@ -144,6 +160,16 @@ async def test_lifespan_shuts_down_after_exception(
         "core.lifecycle.shutdown_resources"
     )
 
+    mock_initialize_rate_limit = mocker.patch(
+        "core.lifecycle.initialize_rate_limit_resources",
+        new_callable=mocker.AsyncMock,
+    )
+
+    mock_clear_rate_limit = mocker.patch(
+        "core.lifecycle.clear_rate_limit_resource_cache",
+        new_callable=mocker.AsyncMock,
+    )
+
     fake_app = mocker.Mock()
 
     with pytest.raises(
@@ -153,8 +179,15 @@ async def test_lifespan_shuts_down_after_exception(
         async with lifecycle.lifespan(
             fake_app
         ):
+            mock_initialize_rate_limit.assert_awaited_once_with()
+
+            mock_clear_rate_limit.assert_not_awaited()
+
             raise RuntimeError(
                 "application error"
             )
 
+
     mock_shutdown.assert_called_once_with()
+
+    mock_clear_rate_limit.assert_awaited_once_with()

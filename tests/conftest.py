@@ -17,8 +17,12 @@ from core.environment import (
     configure_environment,
 )
 
-
 configure_environment()
+
+import core.rate_limit as rate_limit
+import core.lifecycle as lifecycle
+
+
 
 
 
@@ -303,6 +307,41 @@ def integration_app(
         fake_rag,
     )
 
+
+    # =====================================================
+    # Disable external Redis rate limiting in generic
+    # integration tests.
+    # Dedicated tests override this mock explicitly.
+    # =====================================================
+
+
+    async def allow_rate_limit(
+        **kwargs,
+    ):
+        return None
+
+    async def no_op_rate_limit_resource():
+        return None
+
+    monkeypatch.setattr(
+        rate_limit,
+        "enforce_rate_limit",
+        allow_rate_limit,
+    )
+
+    monkeypatch.setattr(
+        lifecycle,
+        "initialize_rate_limit_resources",
+        no_op_rate_limit_resource,
+    )
+
+    monkeypatch.setattr(
+        lifecycle,
+        "clear_rate_limit_resource_cache",
+        no_op_rate_limit_resource,
+    )
+
+
     # =====================================================
     # Fresh application import
     # =====================================================
@@ -443,6 +482,40 @@ def postgres_integration_app(
         "rag",
         fake_rag,
     )
+
+
+    # ============================================
+    # Disable external Redis rate limiting
+    # in PostgreSQL integration tests.
+    # ============================================
+
+    async def allow_rate_limit(
+        **kwargs,
+    ):
+        return None
+
+    async def no_op_rate_limit_resource():
+        return None
+
+    monkeypatch.setattr(
+        rate_limit,
+        "enforce_rate_limit",
+        allow_rate_limit,
+    )
+
+    monkeypatch.setattr(
+        lifecycle,
+        "initialize_rate_limit_resources",
+        no_op_rate_limit_resource,
+    )
+
+    monkeypatch.setattr(
+        lifecycle,
+        "clear_rate_limit_resource_cache",
+        no_op_rate_limit_resource,
+    )
+
+
 
     # ============================================
     # Fresh app import

@@ -33,6 +33,8 @@ from services.streaming import (
 
 from core.config import settings
 
+import core.rate_limit as rate_limit
+
 from api.dependencies.auth import (
     get_current_user,
 )
@@ -85,6 +87,21 @@ async def chat_stream(
 
     user_id = current_user.id
 
+
+    identifier = (
+        rate_limit
+        .build_rate_limit_identifier(
+            request=request,
+            user_id=user_id,
+        )
+    )
+
+    await rate_limit.enforce_rate_limit(
+        scope="chat_stream",
+        identifier=identifier,
+        limit=20,
+        window_seconds=60,
+    )
 
     if is_resume:
         if not conversation_exists(

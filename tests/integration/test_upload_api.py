@@ -1,7 +1,14 @@
+import pytest
 import database
 from pathlib import Path
 
+import core.rate_limit as rate_limit
 import services.document_service as document_service
+
+from core.exceptions import (
+    RateLimitExceededError,
+)
+
 
 
 PASSWORD = "StrongPassword123!"
@@ -548,3 +555,115 @@ def test_upload_returns_500_when_conversation_save_fails(
 
     mock_add_document.assert_not_called()
     mock_cleanup.assert_not_called()
+
+
+
+
+
+def test_upload_applies_user_rate_limit(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-rate-limit@example.com",
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+        return_value={
+            "chunks": 1,
+        },
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "rate-limit-upload"
+        },
+        files={
+            "file": (
+                "document.txt",
+                b"Rate limit test",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="document_upload",
+        identifier=f"user:{user['id']}",
+        limit=10,
+        window_seconds=600,
+    )
+
+
+
+
+def test_upload_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-rate-blocked@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=180
+            )
+        ),
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "blocked-upload"
+        },
+        files={
+            "file": (
+                "document.txt",
+                b"Blocked document",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 429
+
+    assert (
+        response.headers["retry-after"]
+        == "180"
+    )
+
+    assert response.json() == {
+        "success": False,
+        "message": (
+            "Too many requests. "
+            "Please try again later."
+        ),
+        "error_code": "rate_limit_exceeded",
+    }
+
+    mock_add_document.assert_not_called()
+
+    assert database.conversation_exists(
+        "blocked-upload",
+        user_id=user["id"],
+    ) is False

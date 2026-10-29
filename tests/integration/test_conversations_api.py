@@ -1,5 +1,10 @@
 import database
 
+from core.exceptions import (
+    RateLimitExceededError,
+)
+
+
 
 PASSWORD = "StrongPassword123!"
 
@@ -196,3 +201,144 @@ def test_get_conversations_is_isolated_by_user(
         conversations[0]["thread_id"]
         == "thread-user-b"
     )
+
+
+
+def test_get_conversations_applies_user_rate_limit(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "conversation-rate@example.com",
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.get(
+        "/conversations"
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="conversations_list",
+        identifier=f"user:{user['id']}",
+        limit=60,
+        window_seconds=60,
+    )
+
+
+
+
+def test_get_conversations_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    _register_and_login(
+        api_client,
+        "conversation-blocked@example.com",
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=20
+            )
+        ),
+    )
+
+    response = api_client.get(
+        "/conversations"
+    )
+
+    assert response.status_code == 429
+
+    assert response.headers[
+        "retry-after"
+    ] == "20"
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"
+
+
+
+
+def test_history_applies_user_rate_limit(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "history-rate@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="history-rate-thread",
+        first_message="History test",
+        user_id=user["id"],
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    response = api_client.get(
+        "/history/history-rate-thread"
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="conversation_history",
+        identifier=f"user:{user['id']}",
+        limit=60,
+        window_seconds=60,
+    )
+
+
+
+
+def test_history_returns_429_when_rate_limit_exceeded(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "history-blocked@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="history-blocked-thread",
+        first_message="History test",
+        user_id=user["id"],
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=25
+            )
+        ),
+    )
+
+    response = api_client.get(
+        "/history/history-blocked-thread"
+    )
+
+    assert response.status_code == 429
+
+    assert response.headers[
+        "retry-after"
+    ] == "25"
+
+    assert response.json()[
+        "error_code"
+    ] == "rate_limit_exceeded"

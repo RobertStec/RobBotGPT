@@ -23,6 +23,7 @@ class AppError(Exception):
         *,
         message: str | None = None,
         internal_message: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
         self.public_message = (
             message
@@ -31,6 +32,11 @@ class AppError(Exception):
 
         self.internal_message = (
             internal_message
+        )
+
+        self.headers = (
+            headers
+            or {}
         )
 
         super().__init__(
@@ -70,6 +76,33 @@ class ConversationDeletionError(AppError):
     default_message = (
         "Could not completely delete conversation."
     )
+
+
+class RateLimitExceededError(AppError):
+    status_code = 429
+    error_code = "rate_limit_exceeded"
+    default_message = (
+        "Too many requests. "
+        "Please try again later."
+    )
+
+    def __init__(
+        self,
+        *,
+        retry_after: int,
+    ):
+        self.retry_after = max(
+            int(retry_after),
+            1,
+        )
+
+        super().__init__(
+            headers={
+                "Retry-After": str(
+                    self.retry_after
+                )
+            }
+        )
 
 
 class UserAlreadyExistsError(AppError):
@@ -136,4 +169,5 @@ async def app_error_handler(
             "message": exc.public_message,
             "error_code": exc.error_code,
         },
+        headers=exc.headers,
     )

@@ -1,3 +1,9 @@
+import core.rate_limit as rate_limit
+
+from core.exceptions import (
+    RateLimitExceededError,
+)
+
 import importlib
 import json
 
@@ -727,3 +733,108 @@ def test_chat_stream_rejects_foreign_thread(
     )
 
     mock_get_agent.assert_not_called()
+
+
+
+
+def test_chat_stream_applies_user_rate_limit(
+    api_client,
+    chat_router_module,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "chat-rate-limit@example.com",
+    )
+
+    mock_enforce = mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new_callable=mocker.AsyncMock,
+    )
+
+    fake_agent = mocker.Mock()
+
+    fake_agent.stream.return_value = []
+
+    mocker.patch.object(
+        chat_router_module,
+        "get_agent",
+        return_value=fake_agent,
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Hello",
+            "thread_id": "rate-limit-thread",
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    assert response.status_code == 200
+
+    mock_enforce.assert_awaited_once_with(
+        scope="chat_stream",
+        identifier=f"user:{user['id']}",
+        limit=20,
+        window_seconds=60,
+    )
+
+
+
+
+def test_chat_stream_returns_429_when_rate_limit_exceeded(
+    api_client,
+    chat_router_module,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "chat-rate-blocked@example.com",
+    )
+
+    mocker.patch(
+        "core.rate_limit.enforce_rate_limit",
+        new=mocker.AsyncMock(
+            side_effect=RateLimitExceededError(
+                retry_after=30
+            )
+        ),
+    )
+
+    mock_get_agent = mocker.patch.object(
+        chat_router_module,
+        "get_agent",
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Blocked request",
+            "thread_id": "blocked-thread",
+            "model": "gpt-4o-mini",
+        },
+    )
+
+    assert response.status_code == 429
+
+    assert (
+        response.headers["retry-after"]
+        == "30"
+    )
+
+    assert response.json() == {
+        "success": False,
+        "message": (
+            "Too many requests. "
+            "Please try again later."
+        ),
+        "error_code": "rate_limit_exceeded",
+    }
+
+    mock_get_agent.assert_not_called()
+
+    assert database.conversation_exists(
+        "blocked-thread",
+        user_id=user["id"],
+    ) is False
