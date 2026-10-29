@@ -1,0 +1,124 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: robbotgpt-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: robbotgpt
+      POSTGRES_USER: robbotgpt
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U robbotgpt -d robbotgpt"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+    networks:
+      - robbotgpt
+
+  redis:
+    image: redis:7-alpine
+    container_name: robbotgpt-redis
+    restart: unless-stopped
+
+    command:
+      [
+        "redis-server",
+        "--save",
+        "",
+        "--appendonly",
+        "no"
+      ]
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "redis-cli",
+          "ping"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+    networks:
+      - robbotgpt
+
+  app:
+    image: ${ROBBOTGPT_IMAGE:-robertstecmax/robbotgpt:latest}
+    container_name: robbotgpt-app
+    restart: unless-stopped
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    environment:
+      APP_ENV: production
+      APP_RELOAD: "false"
+
+      DATABASE_URL: postgresql+psycopg://robbotgpt:${POSTGRES_PASSWORD}@db:5432/robbotgpt
+      REDIS_URL: redis://redis:6379/0
+
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY is required}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-text-embedding-3-small}
+
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
+      OPENWEATHER_API_KEY: ${OPENWEATHER_API_KEY:-}
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+
+      LANGSMITH_TRACING: ${LANGSMITH_TRACING:-true}
+      LANGSMITH_API_KEY: ${LANGSMITH_API_KEY:-}
+      LANGSMITH_ENDPOINT: ${LANGSMITH_ENDPOINT:-https://eu.api.smith.langchain.com}
+      LANGSMITH_PROJECT: ${LANGSMITH_PROJECT:-RobBotGPT}
+      LANGSMITH_WORKSPACE_ID: ${LANGSMITH_WORKSPACE_ID:-}
+
+    ports:
+      - "127.0.0.1:8080:8080"
+
+    volumes:
+      - uploads_data:/app/uploads
+      - app_data:/app/data
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=5)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+    security_opt:
+      - no-new-privileges:true
+
+    networks:
+      - robbotgpt
+
+
+volumes:
+  postgres_data:
+  uploads_data:
+  app_data:
+
+
+networks:
+  robbotgpt:
+    driver: bridge
