@@ -63,6 +63,11 @@ jobs:
           echo "Deployment SHA: $DEPLOY_SHA"
           echo "Docker image: $IMAGE_URI"
 
+      - name: Checkout deployment configuration
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.image.outputs.deploy_sha }}
+
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v6.3.0
         with:
@@ -79,13 +84,20 @@ jobs:
         run: |
           set -euo pipefail
 
+          COMPOSE_B64="$(base64 -w 0 docker-compose.prod.yml)"
+
           PARAMETERS=$(jq -n \
             --arg deploy_path "${{ vars.AWS_DEPLOY_PATH }}" \
             --arg image_uri "${{ steps.image.outputs.image_uri }}" \
+            --arg compose_b64 "$COMPOSE_B64" \
             '{
               commands: [
                 "set -eu",
                 ("cd " + $deploy_path),
+
+                ("printf %s " + ($compose_b64 | @sh) + " | base64 -d > docker-compose.prod.yml.tmp"),
+                "docker compose --env-file .env.production -f docker-compose.prod.yml.tmp config -q",
+                "mv docker-compose.prod.yml.tmp docker-compose.prod.yml",
 
                 "PREVIOUS_IMAGE=$(docker inspect robbotgpt-app --format '{{.Config.Image}}')",
                 "echo Previous image: $PREVIOUS_IMAGE",
