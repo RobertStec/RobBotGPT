@@ -85,11 +85,13 @@ jobs:
           set -euo pipefail
 
           COMPOSE_B64="$(base64 -w 0 docker-compose.prod.yml)"
+          NGINX_B64="$(base64 -w 0 deploy/nginx/robbotgpt.conf)"
 
           PARAMETERS=$(jq -n \
             --arg deploy_path "${{ vars.AWS_DEPLOY_PATH }}" \
             --arg image_uri "${{ steps.image.outputs.image_uri }}" \
             --arg compose_b64 "$COMPOSE_B64" \
+            --arg nginx_b64 "$NGINX_B64" \
             '{
               commands: [
                 "set -eu",
@@ -98,6 +100,11 @@ jobs:
                 ("printf %s " + ($compose_b64 | @sh) + " | base64 -d > docker-compose.prod.yml.tmp"),
                 "docker compose --env-file .env.production -f docker-compose.prod.yml.tmp config -q",
                 "mv docker-compose.prod.yml.tmp docker-compose.prod.yml",
+
+                ("printf %s " + ($nginx_b64 | @sh) + " | base64 -d > /tmp/robbotgpt.nginx.conf.new"),
+                "cp /etc/nginx/sites-available/robbotgpt /tmp/robbotgpt.nginx.conf.rollback",
+                "cp /tmp/robbotgpt.nginx.conf.new /etc/nginx/sites-available/robbotgpt",
+                "if nginx -t && systemctl reload nginx; then rm -f /tmp/robbotgpt.nginx.conf.new; else cp /tmp/robbotgpt.nginx.conf.rollback /etc/nginx/sites-available/robbotgpt; nginx -t; systemctl reload nginx; rm -f /tmp/robbotgpt.nginx.conf.new /tmp/robbotgpt.nginx.conf.rollback; exit 1; fi",
 
                 "PREVIOUS_IMAGE=$(docker inspect robbotgpt-app --format '{{.Config.Image}}')",
                 "echo Previous image: $PREVIOUS_IMAGE",
@@ -115,10 +122,12 @@ jobs:
                 "DEPLOY_OK=false",
                 "for i in $(seq 1 30); do if curl -fsS http://127.0.0.1:8080/health >/dev/null; then DEPLOY_OK=true; break; fi; echo \"Waiting for new version... attempt $i/30\"; sleep 2; done",
 
-                "if [ \"$DEPLOY_OK\" = \"true\" ]; then echo \"New version is healthy.\"; exit 0; fi",
+                "if [ \"$DEPLOY_OK\" = \"true\" ]; then rm -f /tmp/robbotgpt.nginx.conf.rollback; echo \"New version is healthy.\"; exit 0; fi",
 
                 "echo \"New version failed healthcheck. Starting rollback...\"",
                 "docker logs robbotgpt-app --tail=100 || true",
+
+                "if [ -f /tmp/robbotgpt.nginx.conf.rollback ]; then cp /tmp/robbotgpt.nginx.conf.rollback /etc/nginx/sites-available/robbotgpt; nginx -t; systemctl reload nginx; rm -f /tmp/robbotgpt.nginx.conf.rollback; fi",
 
                 "export ROBBOTGPT_IMAGE=\"$PREVIOUS_IMAGE\"",
                 "echo Rolling back to: $ROBBOTGPT_IMAGE",

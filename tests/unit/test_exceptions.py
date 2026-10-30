@@ -6,6 +6,8 @@ from core.exceptions import (
     DocumentProcessingError,
     app_error_handler,
     RateLimitExceededError,
+    EmptyUploadError,
+    UploadTooLargeError,
 )
 
 
@@ -100,4 +102,30 @@ async def test_app_error_handler_returns_rate_limit_headers(
             "retry-after"
         ]
         == "37"
+    )
+
+
+
+def test_empty_upload_error():
+    exc = EmptyUploadError()
+
+    assert exc.status_code == 400
+    assert exc.error_code == "empty_upload"
+    assert (
+        exc.public_message
+        == "Uploaded file is empty."
+    )
+
+
+def test_upload_too_large_error():
+    exc = UploadTooLargeError(
+        max_bytes=10 * 1024 * 1024
+    )
+
+    assert exc.status_code == 413
+    assert exc.error_code == "upload_too_large"
+
+    assert exc.public_message == (
+        "Uploaded file is too large. "
+        "Maximum allowed size is 10 MB."
     )

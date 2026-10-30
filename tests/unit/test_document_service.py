@@ -1,10 +1,15 @@
+import io
+import zipfile
 import pytest
-
 import services.document_service as document_service
+
+from pypdf import PdfWriter
 
 from core.exceptions import (
     DocumentProcessingError,
     UnsupportedFileTypeError,
+    InvalidUploadFilenameError,
+    InvalidUploadContentError,
 )
 
 
@@ -355,3 +360,301 @@ def test_process_uploaded_document_removes_file_when_rag_cleanup_fails(
         "thread-1",
         user_id=USER_ID,
     )
+
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "",
+        "   ",
+        "../secret.txt",
+        "..\\secret.txt",
+        "folder/file.txt",
+        "folder\\file.txt",
+        "bad\x00name.txt",
+        "bad\nname.txt",
+    ],
+)
+def test_validate_upload_filename_rejects_invalid_names(
+    filename,
+):
+    with pytest.raises(
+        InvalidUploadFilenameError
+    ):
+        document_service.validate_upload_filename(
+            filename
+        )
+
+
+
+def test_validate_upload_filename_rejects_long_name():
+    filename = (
+        "a" * 181
+        + ".txt"
+    )
+
+    with pytest.raises(
+        InvalidUploadFilenameError
+    ):
+        document_service.validate_upload_filename(
+            filename
+        )
+
+
+
+
+def test_validate_upload_filename_normalizes_spaces():
+    result = (
+        document_service
+        .validate_upload_filename(
+            "my document.txt"
+        )
+    )
+
+    assert result == "my_document.txt"
+
+
+
+def test_validate_upload_content_accepts_utf8_text():
+    document_service.validate_upload_content(
+        "notes.txt",
+        "Zażółć gęślą jaźń".encode("utf-8"),
+    )
+
+
+
+def test_validate_upload_content_rejects_binary_text():
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "notes.txt",
+            b"MZ\x00\x00\x90\x00binary",
+        )
+
+
+def test_validate_upload_content_accepts_real_pdf():
+    buffer = io.BytesIO()
+
+    writer = PdfWriter()
+    writer.add_blank_page(
+        width=72,
+        height=72,
+    )
+    writer.write(buffer)
+
+    document_service.validate_upload_content(
+        "document.pdf",
+        buffer.getvalue(),
+    )
+
+
+
+def test_validate_upload_content_rejects_fake_pdf():
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.pdf",
+            b"This is not a PDF.",
+        )
+
+
+
+def test_validate_upload_content_accepts_docx_structure():
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            "<Types/>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships/>",
+        )
+        archive.writestr(
+            "word/document.xml",
+            "<document/>",
+        )
+
+    document_service.validate_upload_content(
+        "document.docx",
+        buffer.getvalue(),
+    )
+
+
+
+def test_validate_upload_content_rejects_fake_docx():
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.docx",
+            b"not a zip file",
+        )
+
+
+
+# Test traversal wewnątrz ZIP
+
+def test_validate_docx_rejects_path_traversal():
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            "<Types/>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships/>",
+        )
+        archive.writestr(
+            "word/document.xml",
+            "<document/>",
+        )
+        archive.writestr(
+            "../evil.txt",
+            "evil",
+        )
+
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.docx",
+            buffer.getvalue(),
+        )
+
+
+
+# Test liczby plików
+
+def test_validate_docx_rejects_too_many_members(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        document_service,
+        "MAX_DOCX_MEMBERS",
+        3,
+    )
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            "<Types/>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships/>",
+        )
+        archive.writestr(
+            "word/document.xml",
+            "<document/>",
+        )
+        archive.writestr(
+            "word/extra.xml",
+            "<extra/>",
+        )
+
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.docx",
+            buffer.getvalue(),
+        )
+
+
+
+# Test rozmiaru po dekompresji
+
+def test_validate_docx_rejects_large_uncompressed_size(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        document_service,
+        "MAX_DOCX_UNCOMPRESSED_BYTES",
+        100,
+    )
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+    ) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            "<Types/>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships/>",
+        )
+        archive.writestr(
+            "word/document.xml",
+            "x" * 101,
+        )
+
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.docx",
+            buffer.getvalue(),
+        )
+
+
+
+# Test wysokiego współczynnika kompresji
+
+def test_validate_docx_rejects_extreme_compression_ratio(
+    monkeypatch,
+):
+    monkeypatch.setattr(
+        document_service,
+        "MAX_DOCX_COMPRESSION_RATIO",
+        2.0,
+    )
+
+    buffer = io.BytesIO()
+
+    with zipfile.ZipFile(
+        buffer,
+        "w",
+        compression=zipfile.ZIP_DEFLATED,
+    ) as archive:
+        archive.writestr(
+            "[Content_Types].xml",
+            "<Types/>",
+        )
+        archive.writestr(
+            "_rels/.rels",
+            "<Relationships/>",
+        )
+        archive.writestr(
+            "word/document.xml",
+            "A" * 5000,
+        )
+
+    with pytest.raises(
+        InvalidUploadContentError
+    ):
+        document_service.validate_upload_content(
+            "document.docx",
+            buffer.getvalue(),
+        )

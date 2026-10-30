@@ -111,6 +111,12 @@ class Settings(BaseSettings):
 
     upload_dir: Path = Path("uploads")
 
+    upload_max_bytes: int = Field(
+        default=10 * 1024 * 1024,
+        ge=1024,
+        le=50 * 1024 * 1024,
+    )
+
     database_url: str
 
     redis_url: str = (

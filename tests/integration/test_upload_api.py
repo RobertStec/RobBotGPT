@@ -667,3 +667,252 @@ def test_upload_returns_429_when_rate_limit_exceeded(
         "blocked-upload",
         user_id=user["id"],
     ) is False
+
+
+
+
+def test_upload_rejects_empty_file(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-empty@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-empty"
+        },
+        files={
+            "file": (
+                "empty.txt",
+                b"",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+
+    assert response.json() == {
+        "success": False,
+        "message": "Uploaded file is empty.",
+        "error_code": "empty_upload",
+    }
+
+    mock_add_document.assert_not_called()
+
+    assert database.conversation_exists(
+        "thread-empty",
+        user_id=user["id"],
+    ) is False
+
+
+
+
+def test_upload_rejects_file_over_size_limit(
+    api_client,
+    mocker,
+    monkeypatch,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-too-large@example.com",
+    )
+
+    max_bytes = 1024 * 1024
+
+    monkeypatch.setattr(
+        document_service.settings,
+        "upload_max_bytes",
+        max_bytes,
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-too-large"
+        },
+        files={
+            "file": (
+                "large.txt",
+                b"x" * (max_bytes + 1),
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 413
+
+    assert response.json() == {
+        "success": False,
+        "message": (
+            "Uploaded file is too large. "
+            "Maximum allowed size is 1 MB."
+        ),
+        "error_code": "upload_too_large",
+    }
+
+    mock_add_document.assert_not_called()
+
+    assert database.conversation_exists(
+        "thread-too-large",
+        user_id=user["id"],
+    ) is False
+
+
+
+
+def test_upload_accepts_file_at_exact_size_limit(
+    api_client,
+    mocker,
+    monkeypatch,
+):
+    _register_and_login(
+        api_client,
+        "upload-boundary@example.com",
+    )
+
+    max_bytes = 8
+
+    monkeypatch.setattr(
+        document_service.settings,
+        "upload_max_bytes",
+        max_bytes,
+    )
+
+    mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+        return_value={
+            "chunks": 1,
+        },
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-boundary"
+        },
+        files={
+            "file": (
+                "boundary.txt",
+                b"12345678",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 200
+
+
+
+
+def test_upload_rejects_path_traversal_filename(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-traversal@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-traversal"
+        },
+        files={
+            "file": (
+                "../secret.txt",
+                b"secret",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+
+    assert response.json() == {
+        "success": False,
+        "message": (
+            "Uploaded file has "
+            "an invalid filename."
+        ),
+        "error_code": (
+            "invalid_upload_filename"
+        ),
+    }
+
+    mock_add_document.assert_not_called()
+
+    assert database.conversation_exists(
+        "thread-traversal",
+        user_id=user["id"],
+    ) is False
+
+
+
+
+def test_upload_rejects_executable_renamed_as_pdf(
+    api_client,
+    mocker,
+):
+    user = _register_and_login(
+        api_client,
+        "upload-fake-pdf@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "thread-fake-pdf"
+        },
+        files={
+            "file": (
+                "document.pdf",
+                b"MZ\x90\x00fake executable",
+                "application/pdf",
+            )
+        },
+    )
+
+    assert response.status_code == 400
+
+    assert response.json() == {
+        "success": False,
+        "message": (
+            "Uploaded file content does not match "
+            "the expected file type."
+        ),
+        "error_code": "invalid_upload_content",
+    }
+
+    mock_add_document.assert_not_called()
+
+    assert database.conversation_exists(
+        "thread-fake-pdf",
+        user_id=user["id"],
+    ) is False

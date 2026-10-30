@@ -605,3 +605,40 @@ def test_settings_rejects_invalid_auth_session_ttl(
         Settings(
             _env_file=None
         )
+
+
+
+
+def test_upload_max_bytes_default():
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_url="sqlite:///:memory:",
+    )
+
+    assert (
+        settings.upload_max_bytes
+        == 10 * 1024 * 1024
+    )
+
+
+
+
+def test_upload_max_bytes_can_be_set_from_environment(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "UPLOAD_MAX_BYTES",
+        "5242880",
+    )
+
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_url="sqlite:///:memory:",
+    )
+
+    assert (
+        settings.upload_max_bytes
+        == 5 * 1024 * 1024
+    )

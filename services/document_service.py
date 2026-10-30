@@ -1,6 +1,15 @@
+import io
+import zipfile
 import logging
 import uuid
-from pathlib import Path
+import stat
+
+from pypdf import PdfReader
+
+from pathlib import (
+    Path,
+    PurePosixPath,
+)
 
 from core.config import settings
 from core.exceptions import (
@@ -8,6 +17,8 @@ from core.exceptions import (
     DocumentProcessingError,
     UnsupportedFileTypeError,
     ConversationNotFoundError,
+    InvalidUploadFilenameError,
+    InvalidUploadContentError,
 )
 from database import (
     conversation_exists,
@@ -31,6 +42,227 @@ ALLOWED_EXTENSIONS = frozenset({
     ".py",
     ".csv",
 })
+
+
+TEXT_EXTENSIONS = frozenset({
+    ".txt",
+    ".md",
+    ".py",
+    ".csv",
+})
+
+
+DOCX_REQUIRED_MEMBERS = frozenset({
+    "[Content_Types].xml",
+    "_rels/.rels",
+    "word/document.xml",
+})
+
+MAX_DOCX_MEMBERS = 1000
+
+MAX_DOCX_UNCOMPRESSED_BYTES = (
+    50 * 1024 * 1024
+)
+
+MAX_DOCX_COMPRESSION_RATIO = 200.0
+
+
+
+def _validate_docx_archive(
+    archive: zipfile.ZipFile,
+) -> None:
+    entries = archive.infolist()
+
+    if (
+        not entries
+        or len(entries) > MAX_DOCX_MEMBERS
+    ):
+        raise InvalidUploadContentError()
+
+    total_uncompressed = 0
+    members = set()
+
+    for entry in entries:
+        normalized_name = (
+            entry.filename
+            .replace("\\", "/")
+        )
+
+        path = PurePosixPath(
+            normalized_name
+        )
+
+        if (
+            not normalized_name
+            or "\x00" in normalized_name
+            or path.is_absolute()
+            or ".." in path.parts
+        ):
+            raise InvalidUploadContentError()
+
+        if (
+            path.parts
+            and ":" in path.parts[0]
+        ):
+            raise InvalidUploadContentError()
+
+        if normalized_name in members:
+            raise InvalidUploadContentError()
+
+        members.add(
+            normalized_name
+        )
+
+        # Reject encrypted ZIP entries.
+        if entry.flag_bits & 0x1:
+            raise InvalidUploadContentError()
+
+        unix_mode = (
+            entry.external_attr >> 16
+        )
+
+        if stat.S_ISLNK(unix_mode):
+            raise InvalidUploadContentError()
+
+        if entry.is_dir():
+            continue
+
+        total_uncompressed += (
+            entry.file_size
+        )
+
+        if (
+            total_uncompressed
+            > MAX_DOCX_UNCOMPRESSED_BYTES
+        ):
+            raise InvalidUploadContentError()
+
+        if entry.file_size > 0:
+            if entry.compress_size <= 0:
+                raise InvalidUploadContentError()
+
+            compression_ratio = (
+                entry.file_size
+                / entry.compress_size
+            )
+
+            if (
+                compression_ratio
+                > MAX_DOCX_COMPRESSION_RATIO
+            ):
+                raise InvalidUploadContentError()
+
+    if not DOCX_REQUIRED_MEMBERS.issubset(
+        members
+    ):
+        raise InvalidUploadContentError()
+
+
+
+
+def validate_upload_content(
+    filename: str,
+    content: bytes,
+) -> None:
+    suffix = (
+        Path(filename)
+        .suffix
+        .lower()
+    )
+
+    if suffix == ".pdf":
+        try:
+            reader = PdfReader(
+                io.BytesIO(content)
+            )
+
+            # Force basic PDF structure parsing.
+            len(reader.pages)
+
+        except Exception as exc:
+            raise InvalidUploadContentError() from exc
+
+        return
+
+    if suffix == ".docx":
+        try:
+            with zipfile.ZipFile(
+                io.BytesIO(content)
+            ) as archive:
+                _validate_docx_archive(
+                    archive
+                )
+
+        except InvalidUploadContentError:
+            raise
+
+        except (
+            zipfile.BadZipFile,
+            OSError,
+        ) as exc:
+            raise InvalidUploadContentError() from exc
+
+        return
+
+    if suffix in TEXT_EXTENSIONS:
+        if b"\x00" in content:
+            raise InvalidUploadContentError()
+
+        try:
+            text = content.decode(
+                "utf-8-sig"
+            )
+
+        except UnicodeDecodeError as exc:
+            raise InvalidUploadContentError() from exc
+
+        if not text.strip():
+            raise InvalidUploadContentError()
+
+        return
+
+    raise UnsupportedFileTypeError()
+
+
+MAX_UPLOAD_FILENAME_LENGTH = 180
+
+
+def validate_upload_filename(
+    filename: str,
+) -> str:
+    filename = filename.strip()
+
+    if not filename:
+        raise InvalidUploadFilenameError()
+
+    if len(filename) > MAX_UPLOAD_FILENAME_LENGTH:
+        raise InvalidUploadFilenameError()
+
+    if (
+        "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+    ):
+        raise InvalidUploadFilenameError()
+
+    if any(
+        ord(character) < 32
+        for character in filename
+    ):
+        raise InvalidUploadFilenameError()
+
+    suffix = (
+        Path(filename)
+        .suffix
+        .lower()
+    )
+
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise UnsupportedFileTypeError()
+
+    return filename.replace(" ", "_")
+
+
 
 
 def _remove_file_if_exists(
@@ -71,19 +303,15 @@ def process_uploaded_document(
     Compensates partial failures where possible.
     """
 
-    suffix = (
-        Path(filename)
-        .suffix
-        .lower()
+    safe_filename = (
+        validate_upload_filename(
+            filename
+        )
     )
 
-    if suffix not in ALLOWED_EXTENSIONS:
-        raise UnsupportedFileTypeError()
-
-    safe_filename = (
-        Path(filename)
-        .name
-        .replace(" ", "_")
+    validate_upload_content(
+        filename,
+        content,
     )
 
     stored_name = (
