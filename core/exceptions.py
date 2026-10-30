@@ -54,6 +54,58 @@ class UnsupportedFileTypeError(AppError):
     )
 
 
+class InvalidUploadFilenameError(AppError):
+    status_code = 400
+    error_code = "invalid_upload_filename"
+    default_message = (
+        "Uploaded file has an invalid filename."
+    )
+
+
+class InvalidUploadContentError(AppError):
+    status_code = 400
+    error_code = "invalid_upload_content"
+    default_message = (
+        "Uploaded file content does not match "
+        "the expected file type."
+    )
+
+
+class EmptyUploadError(AppError):
+    status_code = 400
+    error_code = "empty_upload"
+    default_message = (
+        "Uploaded file is empty."
+    )
+
+
+class UploadTooLargeError(AppError):
+    status_code = 413
+    error_code = "upload_too_large"
+    default_message = (
+        "Uploaded file is too large."
+    )
+
+    def __init__(
+        self,
+        *,
+        max_bytes: int,
+    ):
+        max_megabytes = (
+            max_bytes
+            / (1024 * 1024)
+        )
+
+        super().__init__(
+            message=(
+                "Uploaded file is too large. "
+                "Maximum allowed size is "
+                f"{max_megabytes:g} MB."
+            )
+        )
+
+
+
 class ConversationNotFoundError(AppError):
     status_code = 404
     error_code = "conversation_not_found"
