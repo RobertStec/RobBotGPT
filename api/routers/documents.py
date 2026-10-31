@@ -90,11 +90,11 @@ async def _read_upload_with_limit(
 @router.post("/upload")
 async def upload_document(
     request: Request,
-    file: UploadFile = File(...),
     thread_id: Annotated[
         ThreadId,
         Form(),
-    ] = ...,
+    ],
+    file: UploadFile = File(...),
     current_user=Depends(
         get_current_user
     ),
