@@ -151,6 +151,12 @@ def test_register_user_rejects_invalid_email(
 
     assert response.status_code == 422
 
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
+
 
 
 

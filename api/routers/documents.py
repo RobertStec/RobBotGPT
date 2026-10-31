@@ -11,9 +11,9 @@ from core.config import settings
 
 from fastapi.responses import JSONResponse
 
-from api.dependencies.auth import (
-    get_current_user,
-)
+from api.dependencies.auth import get_current_user
+
+from api.schemas.common import ThreadId
 
 from core.exceptions import (
     AppError,
@@ -28,6 +28,8 @@ from services.document_service import (
     process_uploaded_document,
     validate_upload_filename,
 )
+
+from typing import Annotated
 
 
 
@@ -89,7 +91,10 @@ async def _read_upload_with_limit(
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    thread_id: str = Form(...),
+    thread_id: Annotated[
+        ThreadId,
+        Form(),
+    ] = ...,
     current_user=Depends(
         get_current_user
     ),

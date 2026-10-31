@@ -39,6 +39,10 @@ from api.dependencies.auth import (
     get_current_user,
 )
 
+from api.schemas.chat import (
+    ChatStreamRequest,
+)
+
 from core.exceptions import (
     ConversationNotFoundError,
 )
@@ -58,32 +62,34 @@ router = APIRouter()
 
 @router.post("/chat/stream")
 async def chat_stream(
+    payload: ChatStreamRequest,
     request: Request,
     current_user=Depends(
         get_current_user
     ),
 ):
-    try:
-        data = await request.json()
-    except Exception:
-        return JSONResponse(
-            {"error": "Invalid JSON body."},
-            status_code=400
-        )
+    user_message = (
+        payload.message
+        or ""
+    )
 
-    user_message = data.get("message", "")
-    thread_id = data.get("thread_id", "default")
-    selected_model = data.get("model", settings.openai_model)
-    speech_language = data.get("speech_language", "pl-PL")
+    thread_id = payload.thread_id
 
-    is_resume = "resume" in data
-    resume_value = data.get("resume")
+    selected_model = (
+        payload.model
+        or settings.openai_model
+    )
 
-    if not is_resume and not user_message.strip():
-        return JSONResponse(
-            {"error": "Message is required."},
-            status_code=400
-        )
+    speech_language = (
+        payload.speech_language
+    )
+
+    is_resume = (
+        "resume"
+        in payload.model_fields_set
+    )
+
+    resume_value = payload.resume
 
     user_id = current_user.id
 

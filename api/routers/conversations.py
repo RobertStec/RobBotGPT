@@ -4,9 +4,9 @@ from fastapi import (
     Request,
 )
 
-from api.dependencies.auth import (
-    get_current_user,
-)
+from api.dependencies.auth import get_current_user
+
+from api.schemas.common import ThreadId
 
 from services.conversation_service import (
     delete_conversation_resources,
@@ -55,7 +55,7 @@ async def conversations(
 
 @router.get("/history/{thread_id}")
 async def history(
-    thread_id: str,
+    thread_id: ThreadId,
     request: Request,
     current_user=Depends(
         get_current_user
@@ -91,7 +91,7 @@ async def history(
     "/conversations/{thread_id}"
 )
 async def delete_conversation_endpoint(
-    thread_id: str,
+    thread_id: ThreadId,
     request: Request,
     current_user=Depends(
         get_current_user

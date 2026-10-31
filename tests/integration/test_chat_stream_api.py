@@ -630,10 +630,12 @@ def test_chat_stream_rejects_invalid_json(
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
     assert response.json() == {
-        "error": "Invalid JSON body."
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
     }
 
 
@@ -657,10 +659,12 @@ def test_chat_stream_rejects_empty_message(
         },
     )
 
-    assert response.status_code == 400
+    assert response.status_code == 422
 
     assert response.json() == {
-        "error": "Message is required."
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
     }
 
 
@@ -838,3 +842,86 @@ def test_chat_stream_returns_429_when_rate_limit_exceeded(
         "blocked-thread",
         user_id=user["id"],
     ) is False
+
+
+
+
+def test_chat_stream_rejects_invalid_thread_id(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "chat-invalid-thread@example.com",
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Hello",
+            "thread_id": "../secret",
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
+
+
+
+
+def test_chat_stream_rejects_unknown_model(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "chat-invalid-model@example.com",
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Hello",
+            "thread_id": "thread-model",
+            "model": "unknown-model",
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
+
+
+
+
+def test_chat_stream_rejects_extra_fields(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "chat-extra-field@example.com",
+    )
+
+    response = api_client.post(
+        "/chat/stream",
+        json={
+            "message": "Hello",
+            "thread_id": "thread-extra",
+            "admin": True,
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }

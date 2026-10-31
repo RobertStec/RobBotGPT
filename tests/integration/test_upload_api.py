@@ -916,3 +916,44 @@ def test_upload_rejects_executable_renamed_as_pdf(
         "thread-fake-pdf",
         user_id=user["id"],
     ) is False
+
+
+
+
+def test_upload_rejects_invalid_thread_id(
+    api_client,
+    mocker,
+):
+    _register_and_login(
+        api_client,
+        "upload-invalid-thread@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "bad thread"
+        },
+        files={
+            "file": (
+                "document.txt",
+                b"valid text content",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
+
+    mock_add_document.assert_not_called()
