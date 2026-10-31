@@ -1,6 +1,7 @@
 import logging
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from fastapi.exceptions import RequestValidationError
 
 
 logger = logging.getLogger(__name__)
@@ -222,4 +223,38 @@ async def app_error_handler(
             "error_code": exc.error_code,
         },
         headers=exc.headers,
+    )
+
+
+
+
+async def request_validation_error_handler(
+    request: Request,
+    exc: RequestValidationError,
+) -> JSONResponse:
+    """
+    Convert FastAPI/Pydantic request validation
+    errors into a safe, consistent response.
+    """
+
+    logger.warning(
+        (
+            "Request validation failed "
+            "path=%s errors=%d"
+        ),
+        request.url.path,
+        len(exc.errors()),
+    )
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "message": (
+                "Request validation failed."
+            ),
+            "error_code": (
+                "request_validation_failed"
+            ),
+        },
     )

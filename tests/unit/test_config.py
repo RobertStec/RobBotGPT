@@ -31,6 +31,8 @@ def test_settings_default_values(
         "AUTH_COOKIE_NAME",
         "AUTH_SESSION_TTL_HOURS",
         "AUTH_COOKIE_SAMESITE",
+        "ALLOWED_HOSTS",
+        "CORS_ALLOWED_ORIGINS",
     ]
 
     for variable in environment_variables:
@@ -55,6 +57,20 @@ def test_settings_default_values(
     assert (
         settings.embedding_model
         == "text-embedding-3-small"
+    )
+
+    assert settings.allowed_hosts == [
+        "localhost",
+        "127.0.0.1",
+        "testserver",
+        "robbotgpt.aispectra.pl",
+    ]
+
+    assert (
+        settings.cors_allowed_origins
+        == [
+            "https://robbotgpt.aispectra.pl",
+        ]
     )
 
     assert (
@@ -642,3 +658,46 @@ def test_upload_max_bytes_can_be_set_from_environment(
         settings.upload_max_bytes
         == 5 * 1024 * 1024
     )
+
+
+
+def test_settings_rejects_wildcard_allowed_host(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "ALLOWED_HOSTS",
+        '["*"]',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match="Wildcard host is not allowed",
+    ):
+        Settings(
+            _env_file=None,
+            app_env="test",
+            database_url="sqlite:///:memory:",
+        )
+
+
+
+def test_settings_rejects_wildcard_cors_origin(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        '["*"]',
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "Wildcard CORS origin "
+            "is not allowed"
+        ),
+    ):
+        Settings(
+            _env_file=None,
+            app_env="test",
+            database_url="sqlite:///:memory:",
+        )

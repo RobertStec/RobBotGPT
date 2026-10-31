@@ -695,3 +695,26 @@ def test_delete_conversation_returns_429_when_rate_limit_exceeded(
         "delete-blocked-thread",
         user_id=user["id"],
     ) is True
+
+
+
+
+def test_delete_rejects_invalid_thread_id(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "delete-invalid-thread@example.com",
+    )
+
+    response = api_client.delete(
+        "/conversations/bad%20thread"
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }

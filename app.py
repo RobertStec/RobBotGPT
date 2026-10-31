@@ -13,6 +13,8 @@ from fastapi import (
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 
 from api.routers.chat import router as chat_router
 from api.routers.conversations import router as conversations_router
@@ -25,12 +27,16 @@ from core.lifecycle import lifespan
 from core.exceptions import (
     AppError,
     app_error_handler,
+    request_validation_error_handler,
 )
+
+from core.security_headers import SecurityHeadersMiddleware
 
 from sqlalchemy import text
 
 from database import get_engine
 
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 
 
@@ -42,7 +48,36 @@ STATIC_DIR = BASE_DIR / "static"
 TEMPLATES_DIR = BASE_DIR / "templates"
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=(
+        settings.cors_allowed_origins
+    ),
+    allow_credentials=True,
+    allow_methods=[
+        "GET",
+        "POST",
+        "DELETE",
+    ],
+    allow_headers=[
+        "Content-Type",
+    ],
+    max_age=600,
+)
+
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=settings.allowed_hosts,
+)
+
+app.add_middleware(
+    SecurityHeadersMiddleware
+)
+
 
 app.mount(
     "/static",
@@ -57,6 +92,11 @@ app.mount(
 app.add_exception_handler(
     AppError,
     app_error_handler,
+)
+
+app.add_exception_handler(
+    RequestValidationError,
+    request_validation_error_handler,
 )
 
 app.include_router(

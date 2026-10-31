@@ -1,5 +1,6 @@
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import (
     Field,
@@ -14,6 +15,8 @@ from pydantic_settings import (
 )
 
 from sqlalchemy.engine import make_url
+
+
 
 
 
@@ -182,6 +185,94 @@ class Settings(BaseSettings):
     )
 
     app_reload: bool = True
+
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: [
+            "localhost",
+            "127.0.0.1",
+            "testserver",
+            "robbotgpt.aispectra.pl",
+        ]
+    )
+
+    @field_validator(
+        "allowed_hosts"
+    )
+    @classmethod
+    def validate_allowed_hosts(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        cleaned_hosts = [
+            host.strip()
+            for host in value
+            if host.strip()
+        ]
+
+        if not cleaned_hosts:
+            raise ValueError(
+                "ALLOWED_HOSTS cannot be empty."
+            )
+
+        if "*" in cleaned_hosts:
+            raise ValueError(
+                "Wildcard host is not allowed."
+            )
+
+        return cleaned_hosts
+
+
+    cors_allowed_origins: list[str] = Field(
+        default_factory=lambda: [
+            "https://robbotgpt.aispectra.pl",
+        ]
+    )
+
+    @field_validator(
+        "cors_allowed_origins"
+    )
+    @classmethod
+    def validate_cors_allowed_origins(
+        cls,
+        value: list[str],
+    ) -> list[str]:
+        cleaned_origins = []
+
+        for origin in value:
+            origin = origin.strip()
+
+            if not origin:
+                continue
+
+            if origin == "*":
+                raise ValueError(
+                    "Wildcard CORS origin "
+                    "is not allowed."
+                )
+
+            parsed = urlsplit(origin)
+
+            if (
+                parsed.scheme
+                not in {"http", "https"}
+                or not parsed.netloc
+                or parsed.path not in {"", "/"}
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError(
+                    "Invalid CORS origin."
+                )
+
+            cleaned_origins.append(
+                origin.rstrip("/")
+            )
+
+        return list(
+            dict.fromkeys(
+                cleaned_origins
+            )
+        )
 
     # =====================================================
     # Validators

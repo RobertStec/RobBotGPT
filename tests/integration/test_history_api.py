@@ -207,3 +207,24 @@ def test_history_of_another_user_returns_404(
     assert response.json()["error_code"] == (
         "conversation_not_found"
     )
+
+
+def test_history_rejects_invalid_thread_id(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "history-invalid-thread@example.com",
+    )
+
+    response = api_client.get(
+        "/history/bad%20thread"
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
