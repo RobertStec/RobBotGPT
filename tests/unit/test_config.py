@@ -33,6 +33,7 @@ def test_settings_default_values(
         "AUTH_COOKIE_SAMESITE",
         "ALLOWED_HOSTS",
         "CORS_ALLOWED_ORIGINS",
+        "OPENAI_API_KEY",
     ]
 
     for variable in environment_variables:
@@ -274,6 +275,11 @@ def test_settings_supports_production_environment(
         "false",
     )
 
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "test-openai-key",
+    )
+
     settings = Settings(
         _env_file=None,
         database_url=(
@@ -306,6 +312,11 @@ def test_settings_rejects_reload_in_production(
     monkeypatch.setenv(
         "APP_RELOAD",
         "true",
+    )
+
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "test-openai-key",
     )
 
     with pytest.raises(
@@ -571,6 +582,9 @@ def test_settings_rejects_sqlite_outside_test_environment(
 
     if app_env == "production":
         kwargs["app_reload"] = False
+        kwargs["openai_api_key"] = (
+            "test-openai-key"
+        )
 
     with pytest.raises(
         ValueError,
@@ -701,3 +715,190 @@ def test_settings_rejects_wildcard_cors_origin(
             app_env="test",
             database_url="sqlite:///:memory:",
         )
+
+
+
+def test_settings_requires_openai_key_in_production(
+    monkeypatch,
+):
+    monkeypatch.delenv(
+        "OPENAI_API_KEY",
+        raising=False,
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "OPENAI_API_KEY must be configured "
+            "in production"
+        ),
+    ):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            app_reload=False,
+            database_url=(
+                "postgresql+psycopg://"
+                "user:password@localhost:5432/db"
+            ),
+        )
+
+
+
+
+def test_settings_rejects_blank_openai_key_in_production(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "   ",
+    )
+
+    with pytest.raises(
+        ValidationError,
+        match=(
+            "OPENAI_API_KEY must be configured "
+            "in production"
+        ),
+    ):
+        Settings(
+            _env_file=None,
+            app_env="production",
+            app_reload=False,
+            database_url=(
+                "postgresql+psycopg://"
+                "user:password@localhost:5432/db"
+            ),
+        )
+
+
+
+
+def test_database_and_redis_urls_are_hidden_from_repr():
+    database_url = (
+        "postgresql+psycopg://"
+        "user:database-secret@localhost:5432/db"
+    )
+
+    redis_url = (
+        "redis://:redis-secret@localhost:6379/0"
+    )
+
+    settings = Settings(
+        _env_file=None,
+        app_env="test",
+        database_url=database_url,
+        redis_url=redis_url,
+    )
+
+    settings_repr = repr(
+        settings
+    )
+
+    assert "database-secret" not in settings_repr
+    assert "redis-secret" not in settings_repr
+
+
+
+
+def test_production_configuration_can_be_loaded_from_environment(
+    monkeypatch,
+):
+    monkeypatch.setenv(
+        "APP_ENV",
+        "production",
+    )
+
+    monkeypatch.setenv(
+        "APP_RELOAD",
+        "false",
+    )
+
+    monkeypatch.setenv(
+        "OPENAI_API_KEY",
+        "test-openai-key",
+    )
+
+    monkeypatch.setenv(
+        "OPENAI_MODEL",
+        "gpt-5.6-sol",
+    )
+
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        (
+            "postgresql+psycopg://"
+            "user:password@db:5432/robbotgpt"
+        ),
+    )
+
+    monkeypatch.setenv(
+        "REDIS_URL",
+        "redis://redis:6379/0",
+    )
+
+    settings = Settings(
+        _env_file=None
+    )
+
+    assert settings.is_production is True
+    assert settings.app_reload is False
+
+    assert (
+        settings.openai_model
+        == "gpt-5.6-sol"
+    )
+
+    assert (
+        settings.openai_api_key
+        .get_secret_value()
+        == "test-openai-key"
+    )
+
+    assert (
+        settings.database_url
+        == (
+            "postgresql+psycopg://"
+            "user:password@db:5432/robbotgpt"
+        )
+    )
+
+    assert (
+        settings.redis_url
+        == "redis://redis:6379/0"
+    )
+
+
+
+
+def test_optional_api_keys_are_not_required_in_production(
+    monkeypatch,
+):
+    optional_keys = [
+        "TAVILY_API_KEY",
+        "OPENWEATHER_API_KEY",
+        "ALPHA_VANTAGE_API_KEY",
+        "LANGSMITH_API_KEY",
+    ]
+
+    for key in optional_keys:
+        monkeypatch.delenv(
+            key,
+            raising=False,
+        )
+
+    settings = Settings(
+        _env_file=None,
+        app_env="production",
+        app_reload=False,
+        openai_api_key="test-openai-key",
+        database_url=(
+            "postgresql+psycopg://"
+            "user:password@db:5432/robbotgpt"
+        ),
+    )
+
+    assert settings.tavily_api_key is None
+    assert settings.openweather_api_key is None
+    assert settings.alpha_vantage_api_key is None
+    assert settings.langsmith_api_key is None
