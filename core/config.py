@@ -179,7 +179,8 @@ class Settings(BaseSettings):
     # FastAPI / Uvicorn
     # =====================================================
 
-    app_host: str = "0.0.0.0"
+    # Required for Docker container networking.
+    app_host: str = "0.0.0.0"  # nosec B104
 
     app_port: int = Field(
         default=8080,

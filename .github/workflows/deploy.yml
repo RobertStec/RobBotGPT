@@ -64,12 +64,12 @@ jobs:
           echo "Docker image: $IMAGE_URI"
 
       - name: Checkout deployment configuration
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ steps.image.outputs.deploy_sha }}
 
       - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v6.3.0
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}

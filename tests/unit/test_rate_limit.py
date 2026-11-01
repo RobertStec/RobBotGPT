@@ -416,3 +416,82 @@ async def test_enforce_rate_limit_raises_when_blocked(
         exc_info.value.retry_after
         == 37
     )
+
+
+
+@pytest.mark.asyncio
+async def test_rate_limit_is_isolated_between_users(
+    mocker,
+):
+    counters = {}
+
+    async def fake_eval(
+        script,
+        num_keys,
+        key,
+        window_seconds,
+    ):
+        current = counters.get(
+            key,
+            0,
+        ) + 1
+
+        counters[key] = current
+
+        return [
+            current,
+            60,
+        ]
+
+    client = mocker.Mock()
+
+    client.eval = mocker.AsyncMock(
+        side_effect=fake_eval
+    )
+
+    mocker.patch(
+        "core.rate_limit.get_redis_client",
+        return_value=client,
+    )
+
+    # User A exhausts the limit.
+    first_a = await rate_limit.check_rate_limit(
+        scope="chat_stream",
+        identifier="user:101",
+        limit=2,
+        window_seconds=60,
+    )
+
+    second_a = await rate_limit.check_rate_limit(
+        scope="chat_stream",
+        identifier="user:101",
+        limit=2,
+        window_seconds=60,
+    )
+
+    blocked_a = await rate_limit.check_rate_limit(
+        scope="chat_stream",
+        identifier="user:101",
+        limit=2,
+        window_seconds=60,
+    )
+
+    assert first_a.allowed is True
+    assert second_a.allowed is True
+    assert blocked_a.allowed is False
+
+    # User B must still have an independent counter.
+    first_b = await rate_limit.check_rate_limit(
+        scope="chat_stream",
+        identifier="user:202",
+        limit=2,
+        window_seconds=60,
+    )
+
+    assert first_b.allowed is True
+    assert first_b.remaining == 1
+
+    assert counters == {
+        "rate_limit:chat_stream:user:101": 3,
+        "rate_limit:chat_stream:user:202": 1,
+    }

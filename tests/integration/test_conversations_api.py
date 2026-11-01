@@ -204,6 +204,87 @@ def test_get_conversations_is_isolated_by_user(
 
 
 
+
+def test_history_of_another_user_returns_404(
+    api_client,
+):
+    user_a = _register_and_login(
+        api_client,
+        "history-owner@example.com",
+    )
+
+    database.create_or_update_conversation(
+        thread_id="private-history-thread",
+        first_message="Private conversation",
+        user_id=user_a["id"],
+    )
+
+    database.save_chat_message(
+        thread_id="private-history-thread",
+        role="user",
+        content="Secret message from user A",
+        user_id=user_a["id"],
+    )
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    _register_and_login(
+        api_client,
+        "history-other@example.com",
+    )
+
+    response = api_client.get(
+        "/history/private-history-thread"
+    )
+
+    assert response.status_code == 404
+
+    assert response.json() == {
+        "success": False,
+        "message": "Conversation not found.",
+        "error_code": "conversation_not_found",
+    }
+
+    owner_history = database.get_chat_history(
+        "private-history-thread",
+        user_id=user_a["id"],
+    )
+
+    assert len(owner_history) == 1
+
+    assert (
+        owner_history[0].content
+        == "Secret message from user A"
+    )
+
+
+
+
+def test_history_rejects_invalid_thread_id(
+    api_client,
+):
+    _register_and_login(
+        api_client,
+        "history-invalid-thread@example.com",
+    )
+
+    response = api_client.get(
+        "/history/bad%20thread"
+    )
+
+    assert response.status_code == 422
+
+    assert response.json() == {
+        "success": False,
+        "message": "Request validation failed.",
+        "error_code": "request_validation_failed",
+    }
+
+
+
+
 def test_get_conversations_applies_user_rate_limit(
     api_client,
     mocker,
