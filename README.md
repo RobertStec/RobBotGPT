@@ -1,36 +1,76 @@
 # RobBotGPT
 
-**RobBotGPT** is a production-deployed AI agent application built with **LangGraph, LangChain, FastAPI, PostgreSQL and pgvector**.
+**RobBotGPT** is a production-deployed AI agent application built with **LangGraph, LangChain, FastAPI, PostgreSQL, pgvector and Redis**.
 
-The project combines conversational AI, tool calling, Retrieval-Augmented Generation, persistent LangGraph state, long-term memory, Human-in-the-Loop workflows, LangSmith observability, automated evaluation, CI/CD and cloud deployment.
+The project demonstrates how to design, test, secure and deploy a complete agentic AI application rather than a simple LLM wrapper.
 
-**Live application:** https://robbotgpt.aispectra.pl
+It combines:
+
+- conversational AI,
+- LangGraph orchestration,
+- tool calling,
+- Retrieval-Augmented Generation,
+- query rewriting and reranking,
+- persistent graph state,
+- long-term memory,
+- Human-in-the-Loop workflows,
+- multi-user authentication and isolation,
+- secure document uploads,
+- LangSmith observability and evaluation,
+- automated testing,
+- security quality gates,
+- Docker-based infrastructure,
+- CI/CD,
+- production deployment on AWS.
+
+**Live application:** [robbotgpt.aispectra.pl](https://robbotgpt.aispectra.pl)
 
 ---
 
 ## Project Overview
 
-RobBotGPT was created as a practical AI engineering project focused on building and deploying a complete agentic application rather than a simple LLM wrapper.
+RobBotGPT was created as a practical AI engineering portfolio project focused on the full lifecycle of an agentic application:
+
+```text
+design
+  ↓
+LangGraph orchestration
+  ↓
+RAG and tools
+  ↓
+persistence
+  ↓
+multi-user security
+  ↓
+testing and evaluation
+  ↓
+CI/CD
+  ↓
+production deployment
+```
 
 The application supports:
 
-- conversational AI with streaming responses,
-- LangGraph-based agent orchestration,
-- tool calling,
+- streaming conversational AI,
+- LangGraph-based routing,
+- dynamic tool execution,
 - Retrieval-Augmented Generation,
 - query rewriting,
-- document retrieval with pgvector,
+- semantic retrieval with pgvector,
 - reranking,
 - relevance filtering,
-- RAG fallback when the available context is insufficient,
+- controlled RAG fallback,
 - persistent conversation state,
 - long-term memory,
-- Human-in-the-Loop approval,
 - document uploads,
-- LangSmith tracing and evaluation,
-- automated regression testing,
-- Docker-based deployment,
-- GitHub Actions CI/CD,
+- user authentication and sessions,
+- multi-user data isolation,
+- Human-in-the-Loop approval,
+- LangSmith tracing,
+- automated regression evaluation,
+- Redis-based rate limiting,
+- Docker deployment,
+- automated CI/CD,
 - production deployment on AWS.
 
 ---
@@ -39,14 +79,14 @@ The application supports:
 
 ### LangGraph Agent
 
-The core application is orchestrated with LangGraph.
+The main AI workflow is orchestrated with **LangGraph**.
 
-The graph is responsible for routing requests between:
+The graph routes requests between:
 
-- normal conversational responses,
-- tools,
+- conversational responses,
+- agent tools,
 - document-based RAG,
-- memory operations,
+- long-term memory,
 - Human-in-the-Loop workflows.
 
 LangGraph state is persisted in PostgreSQL using:
@@ -55,10 +95,9 @@ LangGraph state is persisted in PostgreSQL using:
 langgraph-checkpoint-postgres
 ```
 
-This allows conversations to survive application restarts and deployments.
+This allows graph execution state to survive application restarts and production deployments.
 
 ---
-
 
 ### LangGraph Workflow
 
@@ -85,12 +124,25 @@ flowchart TD
 
 The router separates normal agent conversations from document-based RAG requests.
 
-The chatbot branch can dynamically execute tools and return to the chatbot until the agent produces a final response.
+The chatbot branch can execute tools and return to the chatbot until the agent produces a final answer.
 
-The document branch performs query rewriting, retrieval and reranking before routing either to answer generation or to a controlled no-answer fallback.
+The document branch performs:
 
+```text
+query rewriting
+      ↓
+semantic retrieval
+      ↓
+reranking
+      ↓
+relevance filtering
+      ↓
+generation / controlled fallback
+```
 
-### Advanced RAG Pipeline
+---
+
+## Advanced RAG Pipeline
 
 RobBotGPT contains a multi-stage Retrieval-Augmented Generation pipeline.
 
@@ -109,27 +161,26 @@ flowchart LR
 
     RR -->|Relevant context| GEN
     RR -->|Insufficient context| NA
-
-    GEN --> END1[END]
-    NA --> END2[END]
 ```
 
-The RAG system includes:
+The RAG pipeline includes:
 
-- query rewriting using conversation context,
-- semantic retrieval,
-- PostgreSQL with pgvector,
+- conversation-aware query rewriting,
+- OpenAI embeddings,
+- PostgreSQL + pgvector,
+- semantic similarity search,
 - configurable retrieval candidate count,
 - reranking,
-- relevance threshold,
+- relevance thresholds,
 - final context selection,
-- source tracking,
-- document isolation by conversation,
-- explicit fallback instead of hallucinating answers.
+- document source tracking,
+- user-level document isolation,
+- conversation-level document isolation,
+- explicit fallback instead of hallucinated answers.
 
 Uploaded documents are split into chunks and stored together with vector embeddings.
 
-Supported document types include:
+Supported formats include:
 
 ```text
 PDF
@@ -146,24 +197,27 @@ CSV
 
 ```mermaid
 flowchart LR
-    USER[User / Browser]
+    USER[Browser / User]
 
-    API[FastAPI]
+    API[FastAPI API]
+    AUTH[Authentication]
 
     GRAPH[LangGraph Agent]
 
     TOOLS[Agent Tools]
     RAG[RAG Pipeline]
-    MEMORY[Memory]
+    MEMORY[Long-Term Memory]
     HITL[Human-in-the-Loop]
 
     PG[(PostgreSQL + pgvector)]
+    REDIS[(Redis)]
 
     OPENAI[OpenAI]
     EXTERNAL[External APIs]
     LANGSMITH[LangSmith]
 
     USER --> API
+    API --> AUTH
     API --> GRAPH
 
     GRAPH --> TOOLS
@@ -178,6 +232,9 @@ flowchart LR
     GRAPH --> PG
     RAG --> PG
     MEMORY --> PG
+    AUTH --> PG
+
+    API --> REDIS
 
     GRAPH --> LANGSMITH
 ```
@@ -186,7 +243,7 @@ flowchart LR
 
 ## Agent Tools
 
-RobBotGPT supports multiple tools that can be dynamically selected by the agent.
+RobBotGPT supports tools dynamically selected by the agent.
 
 Examples include:
 
@@ -194,7 +251,7 @@ Examples include:
 - weather lookup,
 - stock price lookup,
 - Tavily web search,
-- long-term memory save,
+- long-term memory storage,
 - long-term memory recall,
 - stock purchase workflow with Human-in-the-Loop approval.
 
@@ -206,14 +263,14 @@ External API integrations are configured through environment variables.
 
 ## Human-in-the-Loop
 
-Selected actions can interrupt the LangGraph workflow and require explicit confirmation from the user.
+Selected actions can interrupt LangGraph execution and require explicit user confirmation.
 
 Example:
 
 ```text
 User
   ↓
-Agent decides to execute sensitive action
+Agent selects sensitive operation
   ↓
 LangGraph interrupt()
   ↓
@@ -223,22 +280,58 @@ User decision
   ↓
 Command(resume=...)
   ↓
-Graph continues execution
+Graph resumes
 ```
 
 This demonstrates controlled agent execution for operations that should not be performed automatically.
 
 ---
 
+## Authentication and Multi-User Isolation
+
+RobBotGPT supports user accounts and authenticated sessions.
+
+Authentication features include:
+
+- user registration,
+- login,
+- logout,
+- `/auth/me`,
+- password hashing,
+- session persistence,
+- session expiration,
+- invalid session rejection,
+- inactive user protection,
+- HTTP-only session cookies,
+- SameSite protection,
+- Secure cookies in production.
+
+Application data is scoped by `user_id`.
+
+Isolation applies to:
+
+- conversations,
+- chat history,
+- long-term memory,
+- LangGraph execution,
+- uploaded documents,
+- RAG documents,
+- vector retrieval,
+- document deletion.
+
+Attempts to access another user's resources return controlled errors without exposing whether the resource belongs to another account.
+
+---
+
 ## Memory and Persistence
 
-RobBotGPT supports two different persistence mechanisms.
+RobBotGPT uses multiple persistence mechanisms.
 
-### Conversation state
+### LangGraph checkpoints
 
-LangGraph checkpoints are stored in PostgreSQL.
+Graph execution state is stored in PostgreSQL.
 
-Production tables include:
+Production checkpoint tables include:
 
 ```text
 checkpoints
@@ -247,27 +340,29 @@ checkpoint_writes
 checkpoint_migrations
 ```
 
-This allows graph state to survive container and application restarts.
+This allows graph execution to survive container restarts.
 
-### Application memory
+### Application persistence
 
-The application also stores:
+PostgreSQL also stores:
 
+- users,
+- authentication sessions,
 - conversations,
 - chat messages,
-- long-term memory,
+- long-term memories,
 - RAG documents,
 - RAG chunks.
 
-Persistent state was verified on the production environment by restarting the application container and continuing the same conversation afterwards.
+Persistence was tested both locally and against PostgreSQL integration environments.
 
 ---
 
 ## PostgreSQL and pgvector
 
-PostgreSQL is used as the main application database.
+PostgreSQL is the main persistence layer.
 
-The project uses:
+The application uses:
 
 ```text
 PostgreSQL 16
@@ -279,9 +374,11 @@ Alembic
 
 Database migrations are managed with Alembic.
 
-Main database areas include:
+The schema includes areas for:
 
 ```text
+users
+auth_sessions
 conversations
 chat_messages
 long_term_memory
@@ -290,22 +387,130 @@ rag_chunks
 LangGraph checkpoints
 ```
 
+User ownership is enforced at the application and persistence layers.
+
+---
+
+## Redis and Rate Limiting
+
+Redis is used for distributed API rate limiting.
+
+Rate-limit keys are scoped using identifiers such as:
+
+```text
+rate_limit:{scope}:user:{user_id}
+```
+
+or, for anonymous requests:
+
+```text
+rate_limit:{scope}:ip:{client_ip}
+```
+
+This prevents one authenticated user from consuming another user's quota.
+
+Rate limiting is applied to selected authentication and application endpoints and returns controlled `429 Too Many Requests` responses when limits are exceeded.
+
+---
+
+## Secure Document Uploads
+
+Document uploads are validated before RAG ingestion.
+
+Protections include:
+
+- allowed file extensions,
+- safe filename validation,
+- filename length limits,
+- path traversal prevention,
+- control-character rejection,
+- content validation,
+- UTF-8 validation for text documents,
+- DOCX ZIP validation,
+- protection against suspicious archive contents,
+- ZIP compression-ratio limits,
+- encrypted archive rejection,
+- symbolic link rejection,
+- randomized stored filenames using UUIDs,
+- rollback when RAG ingestion fails,
+- user-scoped RAG persistence.
+
+Two users can upload documents with the same original filename without overwriting each other's files.
+
+---
+
+## API Security
+
+The API contains multiple hardening layers.
+
+### Trusted hosts
+
+Requests with invalid `Host` headers are rejected.
+
+### CORS
+
+Only explicitly configured origins are allowed.
+
+Wildcard origins are not accepted.
+
+### Security headers
+
+Production responses include headers such as:
+
+```text
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: no-referrer
+Permissions-Policy
+Content-Security-Policy
+```
+
+### Request validation
+
+Pydantic schemas validate API input.
+
+Validation failures return standardized responses such as:
+
+```json
+{
+  "success": false,
+  "message": "Request validation failed.",
+  "error_code": "request_validation_failed"
+}
+```
+
+### Authentication failures
+
+Protected resources return standardized responses:
+
+```json
+{
+  "success": false,
+  "message": "Authentication required.",
+  "error_code": "authentication_required"
+}
+```
+
 ---
 
 ## LangSmith and Evaluation
 
-LangSmith is used for tracing and observing LangGraph executions.
+LangSmith is used for tracing and observing LangGraph execution.
 
 The project also contains a dedicated evaluation layer:
 
 ```text
 evals/
 ├── data/
+├── dataset.py
+├── debug_reranker.py
 ├── evaluators.py
 ├── langsmith_client.py
 ├── regression.py
 ├── run_experiment.py
 ├── schemas.py
+├── seed_corpus.py
+├── simulate_regression_failure.py
 ├── sync_dataset.py
 ├── target.py
 └── tracing.py
@@ -316,16 +521,17 @@ The evaluation system supports:
 - LangSmith datasets,
 - RAG evaluation cases,
 - custom evaluators,
+- automated experiment execution,
 - regression detection,
-- automated quality gates.
+- regression quality gates.
 
-Regression evaluation is integrated into GitHub Actions and can block Pull Requests when quality requirements are not met.
+Regression evaluation is integrated into GitHub Actions and can block Pull Requests when quality requirements are not satisfied.
 
 ---
 
 ## Testing
 
-The project contains both unit and integration tests.
+The project contains extensive unit and integration tests.
 
 ```text
 tests/
@@ -333,7 +539,7 @@ tests/
 └── unit/
 ```
 
-Tests cover areas such as:
+Tests cover areas including:
 
 - LangGraph agent construction,
 - graph nodes,
@@ -341,22 +547,31 @@ Tests cover areas such as:
 - tools,
 - streaming,
 - RAG,
+- query rewriting,
 - reranking,
 - configuration,
-- database layer,
-- checkpoints,
-- conversations,
-- document services,
-- API endpoints,
+- database persistence,
 - PostgreSQL integration,
+- LangGraph checkpoints,
+- conversations,
+- authentication,
+- session handling,
+- rate limiting,
+- API schemas,
+- security headers,
+- TrustedHost behavior,
+- CORS,
+- document upload security,
+- multi-user isolation,
+- cross-user access attempts,
 - Human-in-the-Loop,
 - evaluation pipeline,
 - regression evaluation.
 
-Tests are executed with:
+Run the complete test suite with:
 
 ```bash
-pytest
+python -m pytest -v
 ```
 
 Development dependencies are defined in:
@@ -379,44 +594,92 @@ The repository contains four GitHub Actions workflows:
 └── deploy.yml
 ```
 
-### Pull Request Quality Gate
+### Pull Request Quality Gates
 
-Pull Requests run automated checks including:
+Pull Requests run:
 
 ```text
 Python tests
 PostgreSQL integration tests
 Docker build
 Dependency security audit
+Bandit static security analysis
+Gitleaks secret scan
+Trivy container vulnerability scan
 Regression Quality Gate
 ```
 
-A Pull Request can only be merged after required checks pass.
+Required checks must pass before merging into `main`.
 
-### Deployment Pipeline
+---
 
-After changes are merged into `main`:
+## Security Tooling
+
+### pip-audit
+
+Production Python dependencies are scanned for known vulnerabilities.
+
+### Bandit
+
+Python source code is scanned for security issues using static analysis.
+
+### Gitleaks
+
+Repository history is scanned for accidentally committed credentials and secrets.
+
+### Trivy
+
+The final production Docker image is scanned for:
+
+```text
+HIGH
+CRITICAL
+```
+
+known vulnerabilities with available fixes.
+
+The CI pipeline fails when qualifying vulnerabilities are found.
+
+### Immutable GitHub Actions
+
+External GitHub Actions are pinned to complete commit SHA values rather than mutable version tags.
+
+Example:
+
+```yaml
+uses: actions/checkout@<full-commit-sha> # vX.Y.Z
+```
+
+This reduces supply-chain risk from mutable GitHub Action tags.
+
+---
+
+## Deployment Pipeline
+
+After changes pass Pull Request checks and are merged:
 
 ```mermaid
 flowchart LR
     PR[Pull Request]
-    CI[CI]
+    CI[CI + Security Gates]
     REG[Regression Quality Gate]
     MAIN[Merge to main]
     IMG[Docker Image Publish]
-    AWS[Deploy to AWS]
-    PROD[Production Application]
+    AWS[AWS Deployment]
+    HEALTH[Health Check]
+    PROD[Production]
 
     PR --> CI
     PR --> REG
+
     CI --> MAIN
     REG --> MAIN
+
     MAIN --> IMG
     IMG --> AWS
-    AWS --> PROD
+    AWS --> HEALTH
+    HEALTH --> PROD
 ```
-
-The deployment pipeline publishes a Docker image and deploys the new version to the production server.
 
 ---
 
@@ -428,81 +691,88 @@ Production infrastructure includes:
 
 ```text
 AWS EC2
+AWS IAM / OIDC
+AWS Systems Manager
 Docker
 Docker Compose
 PostgreSQL + pgvector
+Redis
 Nginx
 Let's Encrypt
 HTTPS
 GitHub Actions
-Docker image registry
+Docker Hub
 ```
 
-The application is exposed through Nginx while the application container itself listens internally on port `8080`.
+The application is exposed through Nginx.
 
-Production health checks monitor both:
-
-- application container,
-- PostgreSQL container.
-
-Live deployment:
+The FastAPI container listens internally on port:
 
 ```text
-https://robbotgpt.aispectra.pl
+8080
 ```
+
+---
+
+### AWS Authentication
+
+GitHub Actions uses **OpenID Connect (OIDC)** to assume an AWS IAM role.
+
+GitHub Actions authenticates to AWS through OIDC instead of using long-lived AWS access keys for deployment.
+
+---
+
+### Deployment with AWS Systems Manager
+
+Deployment commands are executed through **AWS Systems Manager (SSM)**.
+
+The deployment workflow:
+
+1. resolves the immutable image SHA,
+2. validates deployment configuration,
+3. updates Nginx configuration,
+4. pulls the required Docker image,
+5. starts the new application container,
+6. performs health checks,
+7. verifies the deployed image.
+
+---
+
+### Automatic Rollback
+
+If the new application version fails its health check:
+
+```text
+new deployment
+      ↓
+health check fails
+      ↓
+previous Docker image restored
+      ↓
+application restarted
+      ↓
+rollback health check
+```
+
+The deployment fails if both the new version and rollback fail.
 
 ---
 
 ## Docker
 
-The application uses a multi-stage Docker build based on:
+The application uses a multi-stage Docker build based on Python 3.11.
 
-```text
-python:3.11-slim
-```
-
-The runtime image:
+The production runtime:
 
 - runs as a non-root user,
+- minimizes build dependencies,
+- uses a dedicated virtual environment,
 - drops Linux capabilities,
 - prevents privilege escalation,
-- uses a read-only filesystem,
-- provides a writable temporary filesystem only where required,
-- includes health checks.
+- supports read-only container configuration,
+- exposes only required runtime resources.
 
-### Start the full stack
-
-Create your environment file first:
-
-```bash
-cp .env.example .env
-```
-
-Configure required API keys and database settings.
-
-Then run:
-
-```bash
-docker compose up --build
-```
-
-The application will be available at:
-
-```text
-http://localhost:8080
-```
-
-PostgreSQL is exposed locally on:
-
-```text
-localhost:5433
-```
-
-Stop the stack with:
-
-```bash
-docker compose down
-```
+The final image is scanned with Trivy in CI.
 
 ---
 
@@ -515,6 +785,8 @@ git clone https://github.com/RobertStec/RobBotGPT.git
 cd RobBotGPT
 ```
 
+---
+
 ### 2. Create a Python environment
 
 Using Conda:
@@ -524,17 +796,23 @@ conda create -n robbotgpt python=3.11 -y
 conda activate robbotgpt
 ```
 
+---
+
 ### 3. Install dependencies
+
+Application dependencies:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-For development and testing:
+Development and testing:
 
 ```bash
 pip install -r requirements-dev.txt
 ```
+
+---
 
 ### 4. Configure environment variables
 
@@ -544,25 +822,27 @@ Copy:
 cp .env.example .env
 ```
 
-Then configure the required values.
+Configure the required variables.
 
-Do not commit `.env` to Git.
+Never commit the real `.env` file.
 
-### 5. Start PostgreSQL
+---
 
-You can use Docker Compose:
+### 5. Start infrastructure
 
 ```bash
-docker compose up -d db
+docker compose up -d db redis
 ```
 
-Make sure the database credentials in `.env` match your local PostgreSQL configuration.
+---
 
-### 6. Run migrations
+### 6. Run database migrations
 
 ```bash
 alembic upgrade head
 ```
+
+---
 
 ### 7. Start the application
 
@@ -580,6 +860,22 @@ Open:
 
 ```text
 http://localhost:8080
+```
+
+---
+
+## Docker Compose
+
+The complete local stack can be started with:
+
+```bash
+docker compose up --build
+```
+
+Stop it with:
+
+```bash
+docker compose down
 ```
 
 ---
@@ -658,6 +954,14 @@ POSTGRES_PORT=5433
 DATABASE_URL=postgresql+psycopg://robbotgpt:change_me@localhost:5433/robbotgpt
 ```
 
+### Redis
+
+Example:
+
+```env
+REDIS_URL=redis://localhost:6379/0
+```
+
 Never store real production credentials in the repository.
 
 ---
@@ -672,7 +976,14 @@ Apply migrations:
 alembic upgrade head
 ```
 
-Current migrations include the initial application schema and pgvector-based RAG storage.
+Current migrations include support for:
+
+- initial database schema,
+- users,
+- authentication sessions,
+- multi-user ownership,
+- ownership constraints,
+- pgvector-based RAG storage.
 
 ---
 
@@ -682,37 +993,66 @@ Current migrations include the initial application schema and pgvector-based RAG
 RobBotGPT/
 │
 ├── api/
-│   └── routers/
+│   ├── dependencies/
+│   │   └── auth.py
+│   │
+│   ├── routers/
+│   │   ├── auth.py
+│   │   ├── chat.py
+│   │   ├── conversations.py
+│   │   └── documents.py
+│   │
+│   └── schemas/
+│       ├── auth.py
 │       ├── chat.py
-│       ├── conversations.py
-│       └── documents.py
+│       └── common.py
 │
 ├── core/
 │   ├── config.py
 │   ├── environment.py
 │   ├── exceptions.py
 │   ├── lifecycle.py
-│   └── logging.py
+│   ├── logging.py
+│   ├── rate_limit.py
+│   ├── security.py
+│   └── security_headers.py
 │
 ├── services/
+│   ├── auth_service.py
 │   ├── conversation_service.py
 │   ├── document_service.py
 │   └── streaming.py
 │
 ├── evals/
 │   ├── data/
+│   ├── dataset.py
 │   ├── evaluators.py
 │   ├── langsmith_client.py
 │   ├── regression.py
 │   ├── run_experiment.py
 │   ├── schemas.py
+│   ├── seed_corpus.py
 │   ├── sync_dataset.py
 │   ├── target.py
 │   └── tracing.py
 │
 ├── tests/
 │   ├── integration/
-│   └── unit/
+│   ├── unit/
+│   └── conftest.py
+│
+├── alembic/
+│   └── versions/
+│
+├── deploy/
+│   └── nginx/
+│       └── robbotgpt.conf
+│
+├── docker/
+│   └── entrypoint.sh
+│
+├── docs/
+│   └── SMOKE_TESTS.md
 │
 ├── static/
 │   ├── css/
@@ -720,9 +1060,6 @@ RobBotGPT/
 │
 ├── templates/
 │   └── index.html
-│
-├── alembic/
-│   └── versions/
 │
 ├── .github/
 │   └── workflows/
@@ -743,6 +1080,7 @@ RobBotGPT/
 │
 ├── Dockerfile
 ├── docker-compose.yml
+├── docker-compose.prod.yml
 ├── alembic.ini
 │
 ├── requirements.txt
@@ -754,37 +1092,82 @@ RobBotGPT/
 └── LICENSE
 ```
 
+Generated or local-only artifacts such as `.env`, coverage reports, uploaded documents and local caches are intentionally excluded from this structure.
+
 ---
 
 ## Reliability and Security
 
-The project includes several reliability and security mechanisms:
+RobBotGPT includes multiple reliability and security mechanisms:
 
-- environment-based configuration,
+- user authentication,
+- password hashing,
+- persistent sessions,
+- secure production cookies,
+- multi-user data isolation,
+- user-scoped RAG,
+- user-scoped LangGraph state,
+- Redis-based rate limiting,
+- safe document upload validation,
+- UUID-based stored filenames,
+- request schema validation,
+- standardized API errors,
+- TrustedHost protection,
+- strict CORS configuration,
+- security response headers,
 - centralized logging,
-- application health checks,
 - PostgreSQL health checks,
-- structured exception handling,
+- application health checks,
 - non-root Docker runtime,
-- read-only application container,
 - dropped Linux capabilities,
 - `no-new-privileges`,
 - dependency security auditing,
-- automated tests,
+- Bandit static analysis,
+- Gitleaks secret scanning,
+- Trivy Docker vulnerability scanning,
+- immutable GitHub Action SHAs,
 - Pull Request quality gates,
+- automated regression evaluation,
+- automatic production rollback,
 - RAG fallback instead of unsupported answers,
-- Human-in-the-Loop for selected actions,
+- Human-in-the-Loop for sensitive operations,
 - safe calculator implementation without `eval()`.
+
+---
+
+## Production Security Verification
+
+After deployment, production smoke tests verify:
+
+```text
+/health                       → 200
+database connection           → healthy
+main application              → 200
+
+allowed CORS origin           → accepted
+untrusted CORS origin         → rejected
+
+trusted Host                  → accepted
+invalid Host                  → rejected
+
+invalid request payload       → 422
+unauthenticated request       → 401
+invalid session cookie        → 401
+```
+
+Security headers are also verified in the production environment.
 
 ---
 
 ## Example Use Cases
 
-### General agent conversation
+### General conversation
 
 ```text
 Explain how LangGraph differs from a traditional LangChain agent.
 ```
+
+---
 
 ### Document RAG
 
@@ -797,9 +1180,13 @@ What is the main color of the Atlas project interface?
 
 RobBotGPT retrieves relevant chunks and provides the answer together with document sources.
 
-### Missing document information
+---
 
-If the requested information does not exist in the uploaded documents, the application returns a controlled fallback instead of inventing an answer.
+### Missing information
+
+If requested information is not present in uploaded documents, the application returns a controlled fallback instead of inventing an answer.
+
+---
 
 ### Long-term memory
 
@@ -813,6 +1200,8 @@ Later:
 What project code did I give you?
 ```
 
+---
+
 ### Tool usage
 
 ```text
@@ -825,9 +1214,11 @@ or:
 What is the current weather in Warsaw?
 ```
 
+---
+
 ### Human-in-the-Loop
 
-Selected actions can pause execution and require explicit approval before the graph continues.
+Selected actions can pause graph execution and require explicit user approval before continuing.
 
 ---
 
@@ -860,21 +1251,44 @@ Selected actions can pause execution and require explicit approval before the gr
 - reranking
 - relevance filtering
 
+### Persistence
+
+- PostgreSQL
+- pgvector
+- LangGraph PostgreSQL checkpoints
+- Redis
+
 ### Infrastructure
 
 - Docker
 - Docker Compose
 - GitHub Actions
+- Docker Hub
 - AWS EC2
+- AWS IAM / OIDC
+- AWS Systems Manager
 - Nginx
 - Let's Encrypt
+
+### Security
+
+- Bandit
+- pip-audit
+- Gitleaks
+- Trivy
+- TrustedHost
+- CORS hardening
+- secure session cookies
+- Redis rate limiting
 
 ### Testing
 
 - pytest
 - unit tests
-- integration tests
+- API integration tests
 - PostgreSQL integration tests
+- multi-user isolation tests
+- security tests
 - regression evaluation
 - LangSmith datasets and evaluators
 
@@ -882,24 +1296,56 @@ Selected actions can pause execution and require explicit approval before the gr
 
 ## Future Improvements
 
+RobBotGPT v1.0 already contains the core production architecture planned for the project.
+
 Possible future extensions include:
 
-- authentication and user accounts,
-- rate limiting,
-- distributed task processing,
-- Redis caching,
-- multi-user document isolation,
+- Infrastructure as Code,
+- Terraform-based AWS provisioning,
+- Kubernetes deployment,
+- horizontal application scaling,
+- managed PostgreSQL and Redis,
+- distributed background task processing,
 - additional agent tools,
-- enhanced observability,
-- horizontal scaling,
-- infrastructure as code,
-- Kubernetes deployment.
+- richer metrics and dashboards,
+- OpenTelemetry integration,
+- automated release versioning,
+- image signing and provenance,
+- additional RAG evaluation datasets,
+- load and performance testing.
+
+These are optional extensions rather than requirements for the current production version.
+
+---
+
+## Project Status
+
+```text
+RobBotGPT v1.0
+Status: Production-deployed portfolio project
+```
+
+The application has passed:
+
+- unit tests,
+- integration tests,
+- PostgreSQL integration tests,
+- multi-user isolation tests,
+- security regression tests,
+- LangSmith regression evaluation,
+- dependency audits,
+- static security analysis,
+- secret scanning,
+- Docker vulnerability scanning,
+- production deployment smoke tests.
 
 ---
 
 ## License
 
-This project includes a `LICENSE` file. See it for licensing details.
+This project includes a `LICENSE` file.
+
+See the license file for details.
 
 ---
 
@@ -907,4 +1353,4 @@ This project includes a `LICENSE` file. See it for licensing details.
 
 **Robert Stec**
 
-RobBotGPT was developed as a portfolio project focused on practical AI engineering, LangGraph agent architecture, RAG systems, evaluation, testing and production deployment.
+RobBotGPT was developed as a portfolio project focused on practical AI engineering, LangGraph agent architecture, Retrieval-Augmented Generation, multi-user security, evaluation, testing, CI/CD and production deployment.
