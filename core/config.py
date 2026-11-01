@@ -120,10 +120,13 @@ class Settings(BaseSettings):
         le=50 * 1024 * 1024,
     )
 
-    database_url: str
+    database_url: str = Field(
+        repr=False
+    )
 
-    redis_url: str = (
-        "redis://localhost:6379/0"
+    redis_url: str = Field(
+        default="redis://localhost:6379/0",
+        repr=False,
     )
 
 
@@ -327,6 +330,18 @@ class Settings(BaseSettings):
     def validate_configuration(
         self,
     ):
+        if self.app_env == "production":
+            if (
+                self.openai_api_key is None
+                or not self.openai_api_key
+                .get_secret_value()
+                .strip()
+            ):
+                raise ValueError(
+                    "OPENAI_API_KEY must be configured "
+                    "in production."
+                )
+
         if (
             self.rag_chunk_overlap
             >= self.rag_chunk_size
