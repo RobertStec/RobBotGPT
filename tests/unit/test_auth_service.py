@@ -365,6 +365,59 @@ def test_get_user_from_session_token_rejects_expired_session(
 
 
 
+def test_get_user_from_session_token_rejects_inactive_user(
+    mocker,
+):
+    session = mocker.Mock(
+        user_id=1,
+        expires_at=(
+            auth_service.datetime.utcnow()
+            + auth_service.timedelta(hours=1)
+        ),
+    )
+
+    inactive_user = mocker.Mock(
+        id=1,
+        is_active=False,
+    )
+
+    mocker.patch.object(
+        auth_service,
+        "hash_session_token",
+        return_value="d" * 64,
+    )
+
+    mocker.patch.object(
+        auth_service,
+        "get_auth_session_by_token_hash",
+        return_value=session,
+    )
+
+    mocker.patch.object(
+        auth_service,
+        "get_user_by_id",
+        return_value=inactive_user,
+    )
+
+    mock_delete = mocker.patch.object(
+        auth_service,
+        "delete_auth_session",
+    )
+
+    with pytest.raises(
+        AuthenticationRequiredError
+    ):
+        auth_service.get_user_from_session_token(
+            "inactive-user-token"
+        )
+
+    mock_delete.assert_called_once_with(
+        "d" * 64
+    )
+
+
+
+
 def test_logout_user_deletes_hashed_session(
     mocker,
 ):

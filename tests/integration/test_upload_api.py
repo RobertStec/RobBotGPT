@@ -957,3 +957,199 @@ def test_upload_rejects_invalid_thread_id(
     }
 
     mock_add_document.assert_not_called()
+
+
+
+
+def test_foreign_thread_upload_does_not_modify_owner_data(
+    api_client,
+    mocker,
+):
+    owner = _register_and_login(
+        api_client,
+        "upload-owner-protected@example.com",
+    )
+
+    thread_id = "protected-upload-thread"
+
+    database.create_or_update_conversation(
+        thread_id=thread_id,
+        first_message="Owner private conversation",
+        user_id=owner["id"],
+    )
+
+    database.save_chat_message(
+        thread_id=thread_id,
+        role="user",
+        content="Owner private message",
+        user_id=owner["id"],
+    )
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    attacker = _register_and_login(
+        api_client,
+        "upload-attacker@example.com",
+    )
+
+    mock_add_document = mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+    )
+
+    response = api_client.post(
+        "/upload",
+        data={
+            "thread_id": thread_id
+        },
+        files={
+            "file": (
+                "malicious.txt",
+                b"Unauthorized content",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["error_code"] == (
+        "conversation_not_found"
+    )
+
+    mock_add_document.assert_not_called()
+
+    owner_history = database.get_chat_history(
+        thread_id,
+        user_id=owner["id"],
+    )
+
+    assert len(owner_history) == 1
+
+    assert (
+        owner_history[0].content
+        == "Owner private message"
+    )
+
+    assert database.conversation_exists(
+        thread_id,
+        user_id=owner["id"],
+    ) is True
+
+    assert database.conversation_exists(
+        thread_id,
+        user_id=attacker["id"],
+    ) is False
+
+
+
+
+def test_same_filename_uploads_are_isolated_between_users(
+    api_client,
+    mocker,
+):
+    captured_uploads = []
+
+    def fake_add_document_to_rag(
+        file_path,
+        thread_id,
+        original_filename,
+        *,
+        user_id,
+    ):
+        path = Path(file_path)
+
+        captured_uploads.append({
+            "path": path,
+            "content": path.read_bytes(),
+            "thread_id": thread_id,
+            "user_id": user_id,
+            "original_filename": original_filename,
+        })
+
+        return {
+            "chunks": 1
+        }
+
+    mocker.patch.object(
+        document_service,
+        "add_document_to_rag",
+        side_effect=fake_add_document_to_rag,
+    )
+
+    user_a = _register_and_login(
+        api_client,
+        "same-file-a@example.com",
+    )
+
+    response_a = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "same-file-thread-a"
+        },
+        files={
+            "file": (
+                "shared.txt",
+                b"Private content from user A",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response_a.status_code == 200
+
+    api_client.post(
+        "/auth/logout"
+    )
+
+    user_b = _register_and_login(
+        api_client,
+        "same-file-b@example.com",
+    )
+
+    response_b = api_client.post(
+        "/upload",
+        data={
+            "thread_id": "same-file-thread-b"
+        },
+        files={
+            "file": (
+                "shared.txt",
+                b"Private content from user B",
+                "text/plain",
+            )
+        },
+    )
+
+    assert response_b.status_code == 200
+
+    assert len(captured_uploads) == 2
+
+    upload_a = captured_uploads[0]
+    upload_b = captured_uploads[1]
+
+    assert upload_a["user_id"] == user_a["id"]
+    assert upload_b["user_id"] == user_b["id"]
+
+    assert upload_a["path"] != upload_b["path"]
+
+    assert upload_a["path"].name.endswith(
+        "_shared.txt"
+    )
+
+    assert upload_b["path"].name.endswith(
+        "_shared.txt"
+    )
+
+    assert upload_a["path"].exists()
+    assert upload_b["path"].exists()
+
+    assert upload_a["path"].read_bytes() == (
+        b"Private content from user A"
+    )
+
+    assert upload_b["path"].read_bytes() == (
+        b"Private content from user B"
+    )

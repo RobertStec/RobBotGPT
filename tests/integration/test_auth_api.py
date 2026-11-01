@@ -312,6 +312,39 @@ def test_login_rejects_unknown_user(
 
 
 
+def test_login_sets_secure_session_cookie_attributes(
+    api_client,
+):
+    password = "StrongPassword123!"
+
+    api_client.post(
+        "/auth/register",
+        json={
+            "email": "cookie-security@example.com",
+            "password": password,
+        },
+    )
+
+    response = api_client.post(
+        "/auth/login",
+        json={
+            "email": "cookie-security@example.com",
+            "password": password,
+        },
+    )
+
+    assert response.status_code == 200
+
+    set_cookie = response.headers["set-cookie"]
+
+    assert "robbotgpt_session=" in set_cookie
+    assert "HttpOnly" in set_cookie
+    assert "SameSite=lax" in set_cookie
+    assert "Path=/" in set_cookie
+
+
+
+
 def test_auth_me_returns_logged_in_user(
     api_client,
 ):
@@ -729,3 +762,77 @@ def test_logout_returns_429_when_rate_limit_exceeded(
     assert response.json()[
         "error_code"
     ] == "rate_limit_exceeded"
+
+
+
+
+def test_auth_me_rejects_invalid_session_cookie(
+    api_client,
+):
+    api_client.cookies.set(
+        "robbotgpt_session",
+        "invalid-session-token",
+    )
+
+    response = api_client.get(
+        "/auth/me"
+    )
+
+    assert response.status_code == 401
+
+    assert response.json() == {
+        "success": False,
+        "message": "Authentication required.",
+        "error_code": "authentication_required",
+    }
+
+
+
+
+def test_auth_me_rejects_expired_session(
+    api_client,
+    mocker,
+):
+    api_client.cookies.set(
+        "robbotgpt_session",
+        "expired-session-token",
+    )
+
+    expired_session = mocker.Mock(
+        user_id=1,
+        expires_at=(
+            __import__("datetime")
+            .datetime.utcnow()
+            - __import__("datetime")
+            .timedelta(hours=1)
+        ),
+    )
+
+    mocker.patch(
+        (
+            "services.auth_service."
+            "get_auth_session_by_token_hash"
+        ),
+        return_value=expired_session,
+    )
+
+    mock_delete = mocker.patch(
+        (
+            "services.auth_service."
+            "delete_auth_session"
+        ),
+    )
+
+    response = api_client.get(
+        "/auth/me"
+    )
+
+    assert response.status_code == 401
+
+    assert response.json() == {
+        "success": False,
+        "message": "Authentication required.",
+        "error_code": "authentication_required",
+    }
+
+    mock_delete.assert_called_once()

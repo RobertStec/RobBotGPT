@@ -1,6 +1,7 @@
 import json
 import pytest
 import database
+import rag
 
 from database import (
     ChatMessage,
@@ -15,6 +16,8 @@ from database import (
     save_memory,
     search_memory,
     delete_conversation,
+    RagDocument,
+    RagChunk,
 )
 
 from sqlalchemy import text
@@ -578,6 +581,249 @@ def test_postgres_delete_conversation_rolls_back_on_commit_failure(
         assert conversation_count == 1
         assert message_count == 1
         assert memory_count == 1
+
+    finally:
+        db.close()
+
+
+
+
+def test_postgres_rag_retrieval_is_isolated_by_user(
+    postgres_database,
+    mocker,
+):
+    user_a = _create_test_user(
+        "rag-user-a@example.com"
+    )
+
+    user_b = _create_test_user(
+        "rag-user-b@example.com"
+    )
+
+    thread_id = "shared-rag-thread"
+
+    embedding = (
+        [1.0]
+        + [0.0] * 1535
+    )
+
+    db = postgres_database()
+
+    try:
+        document_a = RagDocument(
+            user_id=user_a.id,
+            thread_id=thread_id,
+            source_name="user_a.txt",
+            stored_name="stored_user_a.txt",
+        )
+
+        document_b = RagDocument(
+            user_id=user_b.id,
+            thread_id=thread_id,
+            source_name="user_b.txt",
+            stored_name="stored_user_b.txt",
+        )
+
+        db.add_all([
+            document_a,
+            document_b,
+        ])
+
+        db.flush()
+
+        db.add_all([
+            RagChunk(
+                document_id=document_a.id,
+                page=None,
+                chunk_index=1,
+                content="Private document from user A.",
+                embedding=embedding,
+            ),
+            RagChunk(
+                document_id=document_b.id,
+                page=None,
+                chunk_index=1,
+                content="Private document from user B.",
+                embedding=embedding,
+            ),
+        ])
+
+        db.commit()
+
+    finally:
+        db.close()
+
+    fake_embeddings = mocker.Mock()
+
+    fake_embeddings.embed_query.return_value = (
+        embedding
+    )
+
+    mocker.patch.object(
+        rag,
+        "get_embeddings",
+        return_value=fake_embeddings,
+    )
+
+    result_a = (
+        rag.retrieve_candidates_from_rag(
+            query="private document",
+            thread_id=thread_id,
+            user_id=user_a.id,
+            k=10,
+        )
+    )
+
+    result_b = (
+        rag.retrieve_candidates_from_rag(
+            query="private document",
+            thread_id=thread_id,
+            user_id=user_b.id,
+            k=10,
+        )
+    )
+
+    assert len(result_a) == 1
+    assert len(result_b) == 1
+
+    assert (
+        result_a[0]["content"]
+        == "Private document from user A."
+    )
+
+    assert (
+        result_a[0]["source"]
+        == "user_a.txt"
+    )
+
+    assert (
+        result_b[0]["content"]
+        == "Private document from user B."
+    )
+
+    assert (
+        result_b[0]["source"]
+        == "user_b.txt"
+    )
+
+    assert (
+        "user B"
+        not in result_a[0]["content"]
+    )
+
+    assert (
+        "user A"
+        not in result_b[0]["content"]
+    )
+
+
+
+
+def test_postgres_rag_document_cannot_be_deleted_by_another_user(
+    postgres_database,
+    tmp_path,
+    monkeypatch,
+):
+    user_a = _create_test_user(
+        "rag-delete-a@example.com"
+    )
+
+    user_b = _create_test_user(
+        "rag-delete-b@example.com"
+    )
+
+    thread_id = "private-rag-thread"
+    stored_name = "private-user-a.txt"
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+
+    monkeypatch.setattr(
+        rag.settings,
+        "upload_dir",
+        upload_dir,
+    )
+
+    file_path = (
+        upload_dir
+        / stored_name
+    )
+
+    file_path.write_text(
+        "Private document from user A.",
+        encoding="utf-8",
+    )
+
+    embedding = (
+        [1.0]
+        + [0.0] * 1535
+    )
+
+    db = postgres_database()
+
+    try:
+        document = RagDocument(
+            user_id=user_a.id,
+            thread_id=thread_id,
+            source_name="private.txt",
+            stored_name=stored_name,
+        )
+
+        db.add(document)
+        db.flush()
+
+        chunk = RagChunk(
+            document_id=document.id,
+            page=None,
+            chunk_index=1,
+            content="Private document from user A.",
+            embedding=embedding,
+        )
+
+        db.add(chunk)
+        db.commit()
+
+        document_id = document.id
+
+    finally:
+        db.close()
+
+    result = rag.delete_document_from_rag(
+        thread_id=thread_id,
+        stored_name=stored_name,
+        user_id=user_b.id,
+    )
+
+    assert result == {
+        "deleted_chunks": 0,
+        "deleted_files": 0,
+    }
+
+    assert file_path.exists() is True
+
+    db = postgres_database()
+
+    try:
+        document_count = (
+            db.query(RagDocument)
+            .filter(
+                RagDocument.id
+                == document_id
+            )
+            .count()
+        )
+
+        chunk_count = (
+            db.query(RagChunk)
+            .filter(
+                RagChunk.document_id
+                == document_id
+            )
+            .count()
+        )
+
+        assert document_count == 1
+        assert chunk_count == 1
 
     finally:
         db.close()
